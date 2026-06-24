@@ -236,6 +236,91 @@ impl Network {
         }
         visited
     }
+
+    /// Índice do primeiro ramo com o id dado.
+    pub fn branch_index(&self, id: &str) -> Option<usize> {
+        self.branches
+            .iter()
+            .position(|b| b.id.as_deref() == Some(id))
+    }
+
+    /// Índices de todos os ramos do tipo linha (que carregam consumidores).
+    pub fn line_indices(&self) -> BTreeSet<usize> {
+        self.branches
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| matches!(b.element, Element::Line { .. }))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// Soma de consumidores dos ramos-linha em `lines`.
+    pub fn consumers_of(&self, lines: &BTreeSet<usize>) -> u32 {
+        lines.iter().map(|&i| self.branches[i].consumers()).sum()
+    }
+
+    /// Barramentos energizados em uma configuração arbitrária: BFS a partir de
+    /// todas as fontes, onde `conduz(idx, branch)` decide se cada ramo conduz.
+    /// É o tijolo reusado tanto por `downstream_lines` (config normal) quanto
+    /// pelo motor de simulação (config vigente + ramos em falta).
+    pub fn energized<F: Fn(usize, &Branch) -> bool>(&self, conduz: F) -> BTreeSet<&str> {
+        let adj = self.adjacency();
+        let mut visited = BTreeSet::new();
+        let mut stack: Vec<&str> = self
+            .buses
+            .iter()
+            .filter(|b| b.is_source())
+            .map(|b| b.id.as_str())
+            .collect();
+        while let Some(bus) = stack.pop() {
+            if !visited.insert(bus) {
+                continue;
+            }
+            for &i in adj.get(bus).map(Vec::as_slice).unwrap_or(&[]) {
+                let b = &self.branches[i];
+                if !conduz(i, b) {
+                    continue;
+                }
+                let other = if b.from == bus {
+                    b.to.as_str()
+                } else {
+                    b.from.as_str()
+                };
+                stack.push(other);
+            }
+        }
+        visited
+    }
+
+    /// Ramos-linha **a jusante** da chave `switch_id` na configuração normal:
+    /// as linhas que perdem energia se apenas aquela chave for aberta. `None`
+    /// se o id não existir.
+    pub fn downstream_lines(&self, switch_id: &str) -> Option<BTreeSet<usize>> {
+        let x = self.branch_index(switch_id)?;
+        let normal = self.energized(|_, b| conducts_normally(b));
+        let cut = self.energized(|i, b| i != x && conducts_normally(b));
+        let downstream_buses: BTreeSet<&str> = normal.difference(&cut).copied().collect();
+        let lines = self
+            .branches
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| matches!(b.element, Element::Line { .. }))
+            .filter(|(_, b)| {
+                downstream_buses.contains(b.from.as_str())
+                    && downstream_buses.contains(b.to.as_str())
+            })
+            .map(|(i, _)| i)
+            .collect();
+        Some(lines)
+    }
+}
+
+/// Um ramo conduz na configuração normal? (linha sempre; chave só se NF/fechada).
+fn conducts_normally(b: &Branch) -> bool {
+    match b.element {
+        Element::Switch { normal } => normal == State::Closed,
+        Element::Line { .. } => true,
+    }
 }
 
 /// Conjunto de problemas estruturais encontrados na validação.

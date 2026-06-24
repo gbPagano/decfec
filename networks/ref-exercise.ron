@@ -1,0 +1,76 @@
+// Rede do exercício de referência (references/ex-decfec.jpg).
+// ====== PARCIAL: apenas o alimentador SD1 ======
+// Leitura literal do diagrama. Chaves de manobra (1,3,4,5,6 e as NAs) são
+// Switch; intermediárias sem manobra (2,7,8,9,10,11) viram junções por ora.
+// As pontas das NAs (xxx_far) são stubs até ligarmos SD2/SD3.
+//
+// Checksums esperados do gabarito (item a):
+//   Cc(SD1) = downstream("1") = 5400
+//   afetado por F2 = downstream("3") = 4500
+//   downstream("4") = 3400   |  downstream("6") = 1700  | trecho 3-4 = 1100
+Network(
+    buses: [
+        (id: "SD1", kind: Substation),
+        (id: "c1",  kind: Junction),  // cabeceira (chaves 1 e 2)
+        (id: "c3",  kind: Junction),
+        (id: "c3d", kind: Junction),
+        (id: "c4u", kind: Junction),
+        (id: "c4",  kind: Junction),
+        (id: "c5u", kind: Junction),
+        (id: "c5",  kind: Junction),
+        (id: "na3", kind: Junction),
+        (id: "na3_far", kind: Junction),
+        (id: "t46", kind: Junction),  // derivação 4-6 (tap p/ NA2)
+        (id: "na2", kind: Junction),
+        (id: "na2_far", kind: Substation),  // TEMP: stand-in de SD3 até encodarmos o feeder
+
+        (id: "c6u", kind: Junction),
+        (id: "c6",  kind: Junction),
+        (id: "c7",  kind: Junction),
+        (id: "c8",  kind: Junction),
+        (id: "c9",  kind: Junction),
+        (id: "na6", kind: Junction),
+        (id: "na6_far", kind: Substation),  // TEMP: stand-in de SD2 até encodarmos o feeder
+
+        (id: "c10", kind: Junction),
+        (id: "c10b",kind: Junction),
+        (id: "c11", kind: Junction),
+        (id: "na7", kind: Junction),
+        (id: "na7_far", kind: Junction),
+    ],
+    branches: [
+        // tronco SD1 -> chave 4
+        (id: Some("1"),      from: "SD1", to: "c1",  element: Switch(normal: Closed)),
+        (id: Some("l_900"),  from: "c1",  to: "c3",  element: Line(consumers: 900)),
+        (id: Some("3"),      from: "c3",  to: "c3d", element: Switch(normal: Closed)),
+        (id: Some("tr_3_4"), from: "c3d", to: "c4u", element: Line(consumers: 0)),   // F2
+        (id: Some("4"),      from: "c4u", to: "c4",  element: Switch(normal: Closed)),
+
+        // ramo descendente: chave 4 -> 5 -> NA3
+        (id: Some("l_700"),  from: "c4",  to: "c5u", element: Line(consumers: 700)),
+        (id: Some("5"),      from: "c5u", to: "c5",  element: Switch(normal: Closed)),
+        (id: Some("l_400d"), from: "c5",  to: "na3", element: Line(consumers: 400)),
+        (id: Some("NA3"),    from: "na3", to: "na3_far", element: Switch(normal: Open)),
+
+        // ramo ascendente: chave 4 -> derivação -> chave 6
+        (id: Some("l_46a"),  from: "c4",  to: "t46", element: Line(consumers: 0)),
+        (id: Some("l_600t"), from: "t46", to: "na2", element: Line(consumers: 600)),  // tap p/ NA2
+        (id: Some("NA2"),    from: "na2", to: "na2_far", element: Switch(normal: Open)),
+        (id: Some("l_46b"),  from: "t46", to: "c6u", element: Line(consumers: 0)),
+        (id: Some("6"),      from: "c6u", to: "c6",  element: Switch(normal: Closed)),
+
+        // chave 6 -> esquerda (7-8-9 -> NA6)
+        (id: Some("tr_6_7"), from: "c6",  to: "c7",  element: Line(consumers: 600)),  // F1
+        (id: Some("l_300a"), from: "c7",  to: "c8",  element: Line(consumers: 300)),
+        (id: Some("l_500a"), from: "c8",  to: "c9",  element: Line(consumers: 500)),
+        (id: Some("l_300b"), from: "c9",  to: "na6", element: Line(consumers: 300)),
+        (id: Some("NA6"),    from: "na6", to: "na6_far", element: Switch(normal: Open)),
+
+        // ramo 10-11 -> NA7: pendura na chave 4 (abaixo da 6). chave 10 isola o ramo.
+        (id: Some("10"),     from: "c4",   to: "c10",  element: Switch(normal: Closed)),
+        (id: Some("l_400r"), from: "c10",  to: "c10b", element: Line(consumers: 400)),
+        (id: Some("l_500r"), from: "c10b", to: "c11",  element: Line(consumers: 500)),
+        (id: Some("l_200"),  from: "c11",  to: "na7",  element: Line(consumers: 200)),
+        (id: Some("NA7"),    from: "na7",  to: "na7_far", element: Switch(normal: Open)),
+    ],
+)
