@@ -1,15 +1,15 @@
-//! Desenho do grafo da rede num canvas egui (somente leitura nesta etapa).
+//! Desenho e interação do grafo da rede num canvas egui.
 //!
 //! As **coordenadas dos nós vivem só aqui/na UI** (um `HashMap<id, Pos2>` em
-//! coordenadas-mundo) — o domínio `decfec` não tem geometria. A cada quadro o
-//! grafo é ajustado (fit-to-view) ao retângulo disponível, preservando o
-//! aspecto, então o tamanho da janela não afeta as posições lógicas.
+//! coordenadas-mundo) — o domínio `decfec` não tem geometria. Uma câmera
+//! ([`CanvasState`]) com pan/zoom mapeia mundo→tela; assim arrastar um nó não
+//! reescala o grafo inteiro (o que aconteceria com um fit-to-view por quadro).
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
-use egui::{Color32, FontId, Pos2, Rect, Stroke, Vec2, emath::RectTransform};
+use egui::{Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2};
 
-use decfec::topology::{Element, Network, State};
+use decfec::topology::{Branch, Element, Network, State};
 
 /// Espaçamento entre camadas (eixo X) e entre nós de uma camada (eixo Y), em
 /// coordenadas-mundo.
@@ -17,6 +17,56 @@ const DX: f32 = 180.0;
 const DY: f32 = 80.0;
 /// Raio do nó, em pixels de tela.
 const NODE_R: f32 = 7.0;
+/// Tolerância de clique (px) para nós e arestas.
+const HIT_SLOP: f32 = 6.0;
+
+/// O que está selecionado no canvas.
+#[derive(Clone, PartialEq)]
+pub enum Selection {
+    /// Um barramento, por id.
+    Bus(String),
+    /// Um ramo, por índice em [`Network::branches`].
+    Branch(usize),
+}
+
+/// Estado de câmera/interação do canvas (persiste entre quadros).
+pub struct CanvasState {
+    /// Deslocamento da câmera, em pixels de tela.
+    pan: Vec2,
+    /// Fator de zoom (px de tela por unidade-mundo).
+    zoom: f32,
+    /// Se `true`, reenquadra o grafo no próximo quadro.
+    needs_fit: bool,
+    /// O que o arrasto atual está movendo.
+    drag: Drag,
+    /// Seleção atual (lida pelo painel de edição).
+    pub selection: Option<Selection>,
+}
+
+enum Drag {
+    None,
+    Pan,
+    Node(String),
+}
+
+impl Default for CanvasState {
+    fn default() -> Self {
+        Self {
+            pan: Vec2::ZERO,
+            zoom: 1.0,
+            needs_fit: true,
+            drag: Drag::None,
+            selection: None,
+        }
+    }
+}
+
+impl CanvasState {
+    /// Pede um reenquadramento (fit-to-view) no próximo desenho.
+    pub fn request_fit(&mut self) {
+        self.needs_fit = true;
+    }
+}
 
 /// Gera um layout determinístico em camadas: a profundidade (X) é a distância
 /// BFS até a fonte mais próxima; nós de mesma profundidade são empilhados em Y
@@ -68,31 +118,104 @@ pub fn layout(net: &Network) -> HashMap<String, Pos2> {
     pos
 }
 
-/// Desenha o grafo no `ui`. Apenas leitura: arestas (coloridas por tipo, com
-/// rótulo) e nós (subestações destacadas).
-pub fn draw(ui: &mut egui::Ui, net: &Network, positions: &HashMap<String, Pos2>) {
-    let (response, painter) = ui.allocate_painter(ui.available_size(), egui::Sense::hover());
-    let screen = response.rect;
+/// Desenha o grafo e processa interação (arrastar nós, pan, zoom, seleção).
+///
+/// `positions` é mutável porque arrastar um nó atualiza sua posição-mundo.
+pub fn draw(
+    ui: &mut egui::Ui,
+    net: &Network,
+    positions: &mut HashMap<String, Pos2>,
+    st: &mut CanvasState,
+) {
+    let (resp, painter) = ui.allocate_painter(ui.available_size(), Sense::click_and_drag());
+    let rect = resp.rect;
+    let center = rect.center();
 
-    let Some(to_screen) = fit_transform(positions, screen) else {
-        painter.text(
-            screen.center(),
-            egui::Align2::CENTER_CENTER,
-            "rede vazia",
-            FontId::proportional(14.0),
-            ui.visuals().weak_text_color(),
-        );
-        return;
-    };
+    if st.needs_fit {
+        if let Some((pan, zoom)) = fit(positions, rect) {
+            st.pan = pan;
+            st.zoom = zoom;
+        }
+        st.needs_fit = false;
+    }
 
+    // Câmera em variáveis locais; alterações (zoom/pan) gravam de volta no fim.
+    let mut pan = st.pan;
+    let mut zoom = st.zoom;
+    let pointer = resp.hover_pos();
+
+    // Zoom em torno do cursor.
+    if resp.hovered() {
+        let scroll = ui.input(|i| i.smooth_scroll_delta.y);
+        if scroll != 0.0 {
+            let p = pointer.unwrap_or(center);
+            let w = to_world(center, pan, zoom, p);
+            zoom = (zoom * (scroll * 0.0015).exp()).clamp(0.05, 20.0);
+            pan = p - center - w.to_vec2() * zoom;
+        }
+    }
+
+    // Início do arrasto: decide se move um nó ou faz pan.
+    if resp.drag_started() {
+        st.drag = match pointer.and_then(|p| node_at(positions, center, pan, zoom, p)) {
+            Some(id) => {
+                st.selection = Some(Selection::Bus(id.clone()));
+                Drag::Node(id)
+            }
+            None => Drag::Pan,
+        };
+    }
+    if resp.dragged() {
+        match &st.drag {
+            Drag::Pan => pan += resp.drag_delta(),
+            Drag::Node(id) => {
+                if let Some(w) = positions.get_mut(id) {
+                    *w += resp.drag_delta() / zoom;
+                }
+            }
+            Drag::None => {}
+        }
+    }
+    if resp.drag_stopped() {
+        st.drag = Drag::None;
+    }
+
+    // Clique simples: seleciona nó, ou aresta, ou limpa.
+    if resp.clicked() {
+        let p = pointer.unwrap_or(center);
+        st.selection = node_at(positions, center, pan, zoom, p)
+            .map(Selection::Bus)
+            .or_else(|| edge_at(net, positions, center, pan, zoom, p).map(Selection::Branch));
+    }
+
+    paint(&painter, net, positions, st, center, pan, zoom);
+
+    st.pan = pan;
+    st.zoom = zoom;
+}
+
+/// Pinta arestas e nós com o estado de câmera/seleção já resolvido.
+fn paint(
+    painter: &egui::Painter,
+    net: &Network,
+    positions: &HashMap<String, Pos2>,
+    st: &CanvasState,
+    center: Pos2,
+    pan: Vec2,
+    zoom: f32,
+) {
     // Arestas primeiro, para os nós ficarem por cima.
-    for b in &net.branches {
+    for (i, b) in net.branches.iter().enumerate() {
         let (Some(&p_from), Some(&p_to)) = (positions.get(&b.from), positions.get(&b.to)) else {
             continue;
         };
-        let a = to_screen * p_from;
-        let z = to_screen * p_to;
-        let (cor, largura, tracejada) = edge_style(&b.element);
+        let a = to_screen(center, pan, zoom, p_from);
+        let z = to_screen(center, pan, zoom, p_to);
+        let (mut cor, mut largura, tracejada) = edge_style(&b.element);
+        if st.selection == Some(Selection::Branch(i)) {
+            cor = Color32::from_rgb(250, 240, 120);
+            largura += 1.5;
+        }
 
         if tracejada {
             painter.add(egui::Shape::dashed_line(
@@ -105,7 +228,6 @@ pub fn draw(ui: &mut egui::Ui, net: &Network, positions: &HashMap<String, Pos2>)
             painter.line_segment([a, z], Stroke::new(largura, cor));
         }
 
-        // Rótulo no ponto médio.
         painter.text(
             a.lerp(z, 0.5),
             egui::Align2::CENTER_CENTER,
@@ -115,27 +237,113 @@ pub fn draw(ui: &mut egui::Ui, net: &Network, positions: &HashMap<String, Pos2>)
         );
     }
 
-    // Nós.
     for bus in &net.buses {
         let Some(&p) = positions.get(&bus.id) else {
             continue;
         };
-        let c = to_screen * p;
-        let (preenchimento, contorno) = if bus.is_source() {
+        let c = to_screen(center, pan, zoom, p);
+        let (preenchimento, mut contorno) = if bus.is_source() {
             (Color32::from_rgb(80, 130, 230), Color32::WHITE)
         } else {
             (Color32::from_gray(70), Color32::from_gray(180))
         };
-        painter.circle(c, NODE_R, preenchimento, Stroke::new(1.5, contorno));
+        let mut largura = 1.5;
+        if st.selection == Some(Selection::Bus(bus.id.clone())) {
+            contorno = Color32::from_rgb(250, 240, 120);
+            largura = 3.0;
+        }
+        painter.circle(c, NODE_R, preenchimento, Stroke::new(largura, contorno));
         painter.text(
             c + Vec2::new(0.0, -NODE_R - 8.0),
             egui::Align2::CENTER_CENTER,
             &bus.id,
             FontId::proportional(11.0),
-            ui.visuals().text_color(),
+            contorno,
         );
     }
 }
+
+// --- transformações câmera ---
+
+fn to_screen(center: Pos2, pan: Vec2, zoom: f32, w: Pos2) -> Pos2 {
+    center + pan + w.to_vec2() * zoom
+}
+
+fn to_world(center: Pos2, pan: Vec2, zoom: f32, s: Pos2) -> Pos2 {
+    ((s - center - pan) / zoom).to_pos2()
+}
+
+/// Barramento sob o ponto de tela `p` (o mais próximo dentro da tolerância).
+fn node_at(
+    positions: &HashMap<String, Pos2>,
+    center: Pos2,
+    pan: Vec2,
+    zoom: f32,
+    p: Pos2,
+) -> Option<String> {
+    positions
+        .iter()
+        .map(|(id, &w)| (id, (to_screen(center, pan, zoom, w) - p).length()))
+        .filter(|&(_, d)| d <= NODE_R + HIT_SLOP)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(id, _)| id.clone())
+}
+
+/// Ramo sob o ponto de tela `p` (segmento mais próximo dentro da tolerância).
+fn edge_at(
+    net: &Network,
+    positions: &HashMap<String, Pos2>,
+    center: Pos2,
+    pan: Vec2,
+    zoom: f32,
+    p: Pos2,
+) -> Option<usize> {
+    net.branches
+        .iter()
+        .enumerate()
+        .filter_map(|(i, b)| {
+            let a = to_screen(center, pan, zoom, *positions.get(&b.from)?);
+            let z = to_screen(center, pan, zoom, *positions.get(&b.to)?);
+            Some((i, dist_to_segment(p, a, z)))
+        })
+        .filter(|&(_, d)| d <= HIT_SLOP)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(i, _)| i)
+}
+
+/// Distância de um ponto ao segmento `a`–`z`.
+fn dist_to_segment(p: Pos2, a: Pos2, z: Pos2) -> f32 {
+    let az = z - a;
+    let len2 = az.length_sq();
+    let t = if len2 == 0.0 {
+        0.0
+    } else {
+        ((p - a).dot(az) / len2).clamp(0.0, 1.0)
+    };
+    (a + az * t - p).length()
+}
+
+/// Câmera (pan, zoom) que enquadra todos os nós em `rect`, com margem e
+/// preservando o aspecto. `None` se não há nós.
+fn fit(positions: &HashMap<String, Pos2>, rect: Rect) -> Option<(Vec2, f32)> {
+    let mut it = positions.values();
+    let first = *it.next()?;
+    let mut mundo = Rect::from_min_max(first, first);
+    for &p in it {
+        mundo.extend_with(p);
+    }
+    let mundo = mundo.expand(1.0);
+
+    let avail = rect.shrink(40.0);
+    let zoom = (avail.width() / mundo.width())
+        .min(avail.height() / mundo.height())
+        .clamp(0.05, 20.0);
+    // Queremos to_screen(mundo.center()) == rect.center(): pan = -c_mundo * zoom.
+    let pan = -mundo.center().to_vec2() * zoom;
+    Some((pan, zoom))
+}
+
+// --- estilo das arestas ---
 
 /// Cor, largura e se é tracejada, conforme o tipo de ramo.
 fn edge_style(el: &Element) -> (Color32, f32, bool) {
@@ -157,36 +365,13 @@ fn edge_style(el: &Element) -> (Color32, f32, bool) {
 }
 
 /// Rótulo de uma aresta: id da chave, ou "id (Nc)" para linhas com carga.
-fn edge_label(b: &decfec::topology::Branch) -> String {
+fn edge_label(b: &Branch) -> String {
     match b.element {
         Element::Line { consumers } if consumers > 0 => {
             format!("{} ({}c)", b.label(), consumers)
         }
         _ => b.label(),
     }
-}
-
-/// Monta a transformação mundo→tela que encaixa todos os nós no `screen`,
-/// preservando o aspecto e deixando uma margem. `None` se não há nós.
-fn fit_transform(positions: &HashMap<String, Pos2>, screen: Rect) -> Option<RectTransform> {
-    let mut it = positions.values();
-    let first = *it.next()?;
-    let mut mundo = Rect::from_min_max(first, first);
-    for &p in it {
-        mundo.extend_with(p);
-    }
-    // Evita divisão por zero em redes degeneradas (1 nó / colineares).
-    let mundo = mundo.expand(1.0);
-
-    let avail = screen.shrink(40.0);
-    let s = (avail.width() / mundo.width())
-        .min(avail.height() / mundo.height())
-        .max(f32::MIN_POSITIVE);
-    let destino = Rect::from_center_size(
-        avail.center(),
-        Vec2::new(mundo.width() * s, mundo.height() * s),
-    );
-    Some(RectTransform::from_to(mundo, destino))
 }
 
 #[cfg(test)]
