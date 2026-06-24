@@ -1,7 +1,11 @@
 //! Estado e laço de UI da aplicação.
 
-use decfec::topology::Network;
+use std::collections::HashMap;
 
+use decfec::topology::Network;
+use egui::Pos2;
+
+use crate::canvas;
 use crate::engine::{self, Report};
 
 /// Rede de referência usada como conteúdo inicial dos editores (embutida em
@@ -23,6 +27,8 @@ pub struct App {
 
     /// Rede carregada e validada (ou `None` se o último parse falhou).
     net: Option<Network>,
+    /// Posições dos nós (coordenadas-mundo) — só na UI, derivadas no carregamento.
+    positions: HashMap<String, Pos2>,
     /// Mensagem do último carregamento da rede (erro, ou resumo de sucesso).
     net_status: Result<String, String>,
     /// Resultado da última simulação.
@@ -37,6 +43,7 @@ impl App {
             scenario_ron: CENARIO_PADRAO.to_string(),
             switch: "1".to_string(),
             net: None,
+            positions: HashMap::new(),
             net_status: Ok(String::new()),
             report: None,
         };
@@ -54,10 +61,12 @@ impl App {
                     net.branches.len(),
                     net.total_consumers()
                 ));
+                self.positions = canvas::layout(&net);
                 self.net = Some(net);
             }
             Err(e) => {
                 self.net = None;
+                self.positions.clear();
                 self.net_status = Err(e);
             }
         }
@@ -85,10 +94,15 @@ impl eframe::App for App {
 
         egui::Panel::left("painel_rede")
             .resizable(true)
-            .default_size(440.0)
+            .default_size(400.0)
             .show_inside(ui, |ui| self.painel_rede(ui));
 
-        egui::CentralPanel::default().show_inside(ui, |ui| self.painel_cenario(ui));
+        egui::Panel::right("painel_cenario")
+            .resizable(true)
+            .default_size(380.0)
+            .show_inside(ui, |ui| self.painel_cenario(ui));
+
+        egui::CentralPanel::default().show_inside(ui, |ui| self.painel_canvas(ui));
     }
 }
 
@@ -125,7 +139,19 @@ impl App {
             });
     }
 
-    /// Painel central: editor RON do cenário, seleção de conjunto e resultados.
+    /// Painel central: o grafo da rede (somente leitura nesta etapa).
+    fn painel_canvas(&mut self, ui: &mut egui::Ui) {
+        match &self.net {
+            Some(net) => canvas::draw(ui, net, &self.positions),
+            None => {
+                ui.centered_and_justified(|ui| {
+                    ui.weak("Carregue uma rede válida (painel à esquerda) para vê-la aqui.");
+                });
+            }
+        }
+    }
+
+    /// Painel direito: editor RON do cenário, seleção de conjunto e resultados.
     fn painel_cenario(&mut self, ui: &mut egui::Ui) {
         ui.add_space(4.0);
         ui.strong("Cenário de faltas (RON)");
