@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 
 use decfec::fault::{Action, Event, Scenario};
-use decfec::topology::{BusKind, Element, Network, State};
-use egui::Pos2;
+use decfec::topology::{Branch, Bus, BusKind, Element, Network, State};
+use egui::{Pos2, Vec2};
 
 use crate::canvas::{self, CanvasState, Selection};
 use crate::engine::{self, Report};
@@ -262,21 +262,112 @@ impl App {
         }
     }
 
-    /// Painel central: o grafo da rede (arrastar nós, pan/zoom, selecionar).
+    /// Painel central: toolbar de estrutura + o grafo (arrastar/pan/zoom/selecionar).
     fn painel_canvas(&mut self, ui: &mut egui::Ui) {
+        // Toolbar primeiro (muta `self`), antes do empréstimo de `self.net`.
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("Ajustar à vista").clicked() {
+                self.canvas.request_fit();
+            }
+            if ui.button("Auto-layout").clicked() {
+                self.relayout();
+            }
+            ui.separator();
+            if ui.button("+ Barra").clicked() {
+                self.add_bus();
+            }
+            let pode_ramo = self.net.as_ref().is_some_and(|n| n.buses.len() >= 2);
+            if ui
+                .add_enabled(pode_ramo, egui::Button::new("+ Ramo"))
+                .clicked()
+            {
+                self.add_branch();
+            }
+            let tem_sel = self.canvas.selection.is_some();
+            if ui
+                .add_enabled(tem_sel, egui::Button::new("Excluir seleção"))
+                .clicked()
+            {
+                self.delete_selection();
+            }
+        });
+        ui.weak("arraste nós · arraste o fundo p/ mover · roda p/ zoom · clique p/ selecionar");
+
         let Some(net) = &self.net else {
             ui.centered_and_justified(|ui| {
                 ui.weak("Carregue uma rede válida (painel à esquerda) para vê-la aqui.");
             });
             return;
         };
-        ui.horizontal(|ui| {
-            if ui.button("Ajustar à vista").clicked() {
-                self.canvas.request_fit();
-            }
-            ui.weak("arraste nós · arraste o fundo p/ mover · roda p/ zoom · clique p/ selecionar");
-        });
         canvas::draw(ui, net, &mut self.positions, &mut self.canvas);
+    }
+
+    /// Recalcula o layout automático e reenquadra (útil após importar/editar).
+    fn relayout(&mut self) {
+        if let Some(net) = &self.net {
+            self.positions = canvas::layout(net);
+            self.canvas.request_fit();
+        }
+    }
+
+    /// Adiciona um barramento novo (junção) perto do centro da vista e o seleciona.
+    fn add_bus(&mut self) {
+        let pos = centroid(&self.positions) + Vec2::new(60.0, 0.0);
+        let Some(net) = self.net.as_mut() else {
+            return;
+        };
+        let id = unique_id(net.buses.iter().map(|b| b.id.as_str()), "barra");
+        net.buses.push(Bus {
+            id: id.clone(),
+            kind: BusKind::Junction,
+        });
+        self.positions.insert(id.clone(), pos);
+        self.canvas.selection = Some(Selection::Bus(id));
+        self.revalidate();
+    }
+
+    /// Adiciona um ramo entre os dois primeiros barramentos (editável depois).
+    fn add_branch(&mut self) {
+        let Some(net) = self.net.as_mut() else {
+            return;
+        };
+        if net.buses.len() < 2 {
+            return;
+        }
+        let from = net.buses[0].id.clone();
+        let to = net.buses[1].id.clone();
+        let id = unique_id(net.branches.iter().filter_map(|b| b.id.as_deref()), "ramo");
+        net.branches.push(Branch {
+            id: Some(id),
+            from,
+            to,
+            element: Element::Line { consumers: 0 },
+        });
+        self.canvas.selection = Some(Selection::Branch(net.branches.len() - 1));
+        self.revalidate();
+    }
+
+    /// Exclui a seleção: um ramo, ou uma barra (em cascata com seus ramos).
+    fn delete_selection(&mut self) {
+        let Some(sel) = self.canvas.selection.take() else {
+            return;
+        };
+        let Some(net) = self.net.as_mut() else {
+            return;
+        };
+        match sel {
+            Selection::Bus(id) => {
+                net.buses.retain(|b| b.id != id);
+                net.branches.retain(|b| b.from != id && b.to != id);
+                self.positions.remove(&id);
+            }
+            Selection::Branch(i) => {
+                if i < net.branches.len() {
+                    net.branches.remove(i);
+                }
+            }
+        }
+        self.revalidate();
     }
 
     /// Painel direito: seleção de conjunto, resultados e editor de eventos.
@@ -416,6 +507,27 @@ impl App {
             }
         }
     }
+}
+
+/// Centro geométrico das posições atuais (origem se vazio).
+fn centroid(positions: &HashMap<String, Pos2>) -> Pos2 {
+    if positions.is_empty() {
+        return Pos2::ZERO;
+    }
+    let n = positions.len() as f32;
+    let soma = positions
+        .values()
+        .fold(Vec2::ZERO, |acc, p| acc + p.to_vec2());
+    (soma / n).to_pos2()
+}
+
+/// Primeiro id `{prefixo}{n}` (n≥1) que não colide com os existentes.
+fn unique_id<'a>(existing: impl Iterator<Item = &'a str>, prefixo: &str) -> String {
+    let usados: std::collections::HashSet<&str> = existing.collect();
+    (1..)
+        .map(|n| format!("{prefixo}{n}"))
+        .find(|id| !usados.contains(id.as_str()))
+        .expect("sequência infinita sempre acha um id livre")
 }
 
 /// Rótulo em português de uma ação de evento.
