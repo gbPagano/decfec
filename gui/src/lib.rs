@@ -5,5 +5,6 @@
 //! redes e cenários entram/saem como texto RON, o que torna tudo WASM-friendly.
 
 mod app;
+mod engine;
 
 pub use app::App;
