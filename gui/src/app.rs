@@ -158,6 +158,11 @@ impl App {
         egui::CollapsingHeader::new("Texto RON")
             .default_open(false)
             .show(ui, |ui| {
+                if ui.button("Exportar do grafo").clicked()
+                    && let Some(net) = &self.net
+                {
+                    self.net_ron = engine::network_to_ron(net);
+                }
                 egui::ScrollArea::both()
                     .id_salt("scroll_rede")
                     .show(ui, |ui| {
@@ -470,9 +475,14 @@ impl App {
         egui::CollapsingHeader::new("Texto RON")
             .default_open(false)
             .show(ui, |ui| {
-                if ui.button("Recarregar do RON").clicked() {
-                    self.load_scenario_from_ron();
-                }
+                ui.horizontal(|ui| {
+                    if ui.button("Recarregar do RON").clicked() {
+                        self.load_scenario_from_ron();
+                    }
+                    if ui.button("Exportar").clicked() {
+                        self.scenario_ron = engine::scenario_to_ron(&self.scenario);
+                    }
+                });
                 egui::ScrollArea::both()
                     .id_salt("scroll_cenario")
                     .show(ui, |ui| {

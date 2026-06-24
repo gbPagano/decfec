@@ -14,16 +14,21 @@ the user communicates in Portuguese — respond in Portuguese.
 ## Commands
 
 ```bash
-cargo test                      # all tests (lib unit tests + tests/ integration)
+cargo test --workspace          # all tests (decfec lib/integration + gui)
 cargo test sd1_checksums        # a single test by name substring
 cargo test --test ref-exercise  # one integration test file
-cargo clippy --all-targets      # lint (keep it clean — CI-grade expectation here)
+cargo clippy --workspace --all-targets   # lint (keep it clean — covers gui too)
 cargo build
 
 # Runner (the CLI has three modes; first arg is always the network .ron):
 cargo run -- networks/ref-exercise.ron                                  # summary (Cc, buses, sources)
 cargo run -- networks/ref-exercise.ron downstream 6                     # consumers a jusante da chave 6
 cargo run -- networks/ref-exercise.ron dec-fec scenarios/item_a.ron 1   # DEC/FEC of the set downstream of switch "1"
+
+# GUI (egui/eframe, in gui/ — see "The GUI" below):
+cargo run -p decfec-gui                  # native window (fast iteration)
+cd gui && trunk serve --open             # WebAssembly in the browser (watch mode)
+cd gui && trunk build --release          # static WASM bundle in gui/dist/
 ```
 
 `dec-fec` without a final switch arg reports over the whole system.
@@ -45,8 +50,32 @@ cargo clippy --workspace --all-targets
 
 ## Architecture
 
-Library + binary: `src/lib.rs` exposes `topology` and `fault` (the reusable domain, intended
-to back a future GUI too); `src/main.rs` is only the CLI runner over those modules.
+This is a Cargo **workspace**: the `decfec` crate (lib + CLI) at the root, and the
+`decfec-gui` crate in `gui/`. The lib (`src/lib.rs`) exposes `topology` and `fault` (the
+reusable domain); `src/main.rs` is only the CLI runner over those modules.
+
+### The GUI (`gui/`) — egui/eframe, compiles to WASM
+
+The GUI is **pure UI glue** over the `decfec` crate — the domain is untouched. Entry points:
+`gui/src/main.rs` (native `run_native` + `#[cfg(wasm32)]` `WebRunner` over `#the_canvas_id`),
+`gui/index.html` (trunk template).
+
+- `gui/src/engine.rs` mirrors the CLI's `report_dec_fec` but **returns values** (`Report`)
+  instead of printing, and exposes `load_network`/`load_scenario` (parse+validate) and
+  `network_to_ron`/`scenario_to_ron` (export). No filesystem — RON is text in/out, embedded as
+  defaults via `include_str!` (WASM-friendly).
+- `gui/src/app.rs` holds the `eframe::App`. **The in-memory `Network`/`Scenario` are the
+  source of truth** after graphical edits; the RON textareas are import (`Recarregar`) /
+  export (`Exportar`). Left panel = selection editor + RON; center = graph; right = scenario
+  events + set selector + DEC/FEC results.
+- `gui/src/canvas.rs` draws/edits the graph. **Node positions live only here** (`HashMap<id,
+  Pos2>`) — the domain has no geometry. A pan/zoom camera (`CanvasState`) maps world→screen so
+  dragging a node doesn't rescale everything; `layout()` is a deterministic BFS-layered
+  auto-layout.
+- **eframe 0.34 gotcha:** `App::ui(&mut self, ui, frame)` is the required method (not
+  `update`); panels use `Panel::top/left/right` + `show_inside(ui, …)`.
+- Tests in `engine.rs`/`canvas.rs` reproduce the answer key (DEC≈2.33h, FEC≈1.15) and check
+  export round-trips — the fast way to verify the UI is wired to the domain without launching.
 
 ### Topology (`src/topology.rs`) — the network as a graph
 

@@ -26,6 +26,21 @@ pub fn load_network(ron: &str) -> Result<Network, String> {
     Ok(net)
 }
 
+/// Serializa a rede em RON legível (export do grafo para texto).
+pub fn network_to_ron(net: &Network) -> String {
+    to_ron(net)
+}
+
+/// Serializa o cenário em RON legível.
+pub fn scenario_to_ron(scenario: &Scenario) -> String {
+    to_ron(scenario)
+}
+
+fn to_ron<T: serde::Serialize>(value: &T) -> String {
+    let cfg = ron::ser::PrettyConfig::default();
+    ron::ser::to_string_pretty(value, cfg).unwrap_or_else(|e| format!("// erro ao serializar: {e}"))
+}
+
 /// Parseia um cenário a partir do texto RON.
 pub fn load_scenario(ron: &str) -> Result<Scenario, String> {
     Scenario::from_ron(ron).map_err(|e| format!("erro de parse no cenário: {e}"))
@@ -68,5 +83,20 @@ mod tests {
         assert_eq!(r.cc, 5400, "Cc do alimentador SD1");
         assert!((r.ind.dec_h - 2.33).abs() < 0.01, "DEC = {}", r.ind.dec_h);
         assert!((r.ind.fec - 1.15).abs() < 0.01, "FEC = {}", r.ind.fec);
+    }
+
+    #[test]
+    fn export_de_rede_volta_a_carregar() {
+        // grafo → RON → grafo deve preservar os indicadores (round-trip).
+        let net = load_network(REDE).unwrap();
+        let net2 = load_network(&network_to_ron(&net)).expect("RON exportado deve recarregar");
+        assert_eq!(net.branches.len(), net2.branches.len());
+
+        let scenario = load_scenario(CENARIO).unwrap();
+        let scenario2 =
+            load_scenario(&scenario_to_ron(&scenario)).expect("cenário exportado deve recarregar");
+        let r = run(&net2, &scenario2, Some("1")).unwrap();
+        assert_eq!(r.cc, 5400);
+        assert!((r.ind.dec_h - 2.33).abs() < 0.01);
     }
 }
