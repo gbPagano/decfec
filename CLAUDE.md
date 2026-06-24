@@ -31,8 +31,8 @@ cargo run -- networks/ref-exercise.ron dec-fec scenarios/item_a.ron 1   # DEC/FE
 ## Commits
 
 When the user asks for a commit, do **not** run `git commit` — deliver only the commit
-**message text**, in Conventional Commits format with a **succinct body**. The user commits
-themselves.
+**message text**, in Conventional Commits format with a **succinct body**, written in
+**English**. The user commits themselves.
 
 Before handing over that text, run the validation gate and make sure all three pass (fix and
 re-run if anything fails):
@@ -40,7 +40,7 @@ re-run if anything fails):
 ```bash
 cargo test
 cargo fmt --check
-cargo clippy --all-targets
+cargo clippy --workspace --all-targets
 ```
 
 ## Architecture

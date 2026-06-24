@@ -1,3 +1,6 @@
+[workspace]
+members = ["gui"]
+
 [package]
 name = "decfec"
 version = "0.1.0"
