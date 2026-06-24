@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use decfec::fault::{Action, Event, Scenario};
 use decfec::topology::{BusKind, Element, Network, State};
 use egui::Pos2;
 
@@ -20,8 +21,10 @@ const CENARIO_PADRAO: &str = include_str!("../../scenarios/item_a.ron");
 pub struct App {
     /// Texto RON da rede (editável).
     net_ron: String,
-    /// Texto RON do cenário de faltas (editável).
+    /// Texto RON do cenário de faltas (para importar/recarregar).
     scenario_ron: String,
+    /// Cenário em memória (fonte da verdade para o editor de eventos).
+    scenario: Scenario,
     /// Chave para o conjunto a jusante; vazio = sistema inteiro.
     switch: String,
 
@@ -43,6 +46,8 @@ impl App {
         let mut app = Self {
             net_ron: REDE_PADRAO.to_string(),
             scenario_ron: CENARIO_PADRAO.to_string(),
+            scenario: engine::load_scenario(CENARIO_PADRAO)
+                .unwrap_or_else(|_| Scenario { events: Vec::new() }),
             switch: "1".to_string(),
             net: None,
             positions: HashMap::new(),
@@ -83,9 +88,20 @@ impl App {
     fn simulate(&mut self) {
         let switch = self.switch.trim();
         self.report = Some(match &self.net {
-            Some(net) => engine::run(net, &self.scenario_ron, Some(switch)),
+            Some(net) => engine::run(net, &self.scenario, Some(switch)),
             None => Err("carregue uma rede válida antes de simular".to_string()),
         });
+    }
+
+    /// Reparseia o cenário a partir do texto RON (botão "Recarregar").
+    fn load_scenario_from_ron(&mut self) {
+        match engine::load_scenario(&self.scenario_ron) {
+            Ok(s) => {
+                self.scenario = s;
+                self.report = None;
+            }
+            Err(e) => self.report = Some(Err(e)),
+        }
     }
 }
 
@@ -263,17 +279,38 @@ impl App {
         canvas::draw(ui, net, &mut self.positions, &mut self.canvas);
     }
 
-    /// Painel direito: editor RON do cenário, seleção de conjunto e resultados.
+    /// Painel direito: seleção de conjunto, resultados e editor de eventos.
     fn painel_cenario(&mut self, ui: &mut egui::Ui) {
+        // Ids auxiliares, clonados para não conflitar com `&mut self.scenario`.
+        let switch_ids: Vec<String> = self
+            .net
+            .iter()
+            .flat_map(|n| n.branches.iter().filter(|b| b.is_switch()))
+            .filter_map(|b| b.id.clone())
+            .collect();
+        let branch_ids: Vec<String> = self
+            .net
+            .iter()
+            .flat_map(|n| n.branches.iter())
+            .filter_map(|b| b.id.clone())
+            .collect();
+
         ui.add_space(4.0);
-        ui.strong("Cenário de faltas (RON)");
         ui.horizontal(|ui| {
-            ui.label("Conjunto — chave a jusante:");
-            ui.add(
-                egui::TextEdit::singleline(&mut self.switch)
-                    .hint_text("vazio = sistema inteiro")
-                    .desired_width(120.0),
-            );
+            ui.strong("Conjunto:");
+            let texto = if self.switch.is_empty() {
+                "Sistema inteiro".to_string()
+            } else {
+                format!("a jusante de {}", self.switch)
+            };
+            egui::ComboBox::from_id_salt("conjunto")
+                .selected_text(texto)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.switch, String::new(), "Sistema inteiro");
+                    for id in &switch_ids {
+                        ui.selectable_value(&mut self.switch, id.clone(), id);
+                    }
+                });
             if ui.button("▶ Simular").clicked() {
                 self.simulate();
             }
@@ -282,15 +319,79 @@ impl App {
         self.painel_resultado(ui);
 
         ui.separator();
-        egui::ScrollArea::both()
-            .id_salt("scroll_cenario")
+        ui.horizontal(|ui| {
+            ui.strong("Eventos");
+            if ui.button("+ adicionar").clicked() {
+                self.scenario.events.push(Event {
+                    at_min: 0.0,
+                    branch: branch_ids.first().cloned().unwrap_or_default(),
+                    action: Action::Fault,
+                });
+            }
+            if ui.button("ordenar por tempo").clicked() {
+                self.scenario
+                    .events
+                    .sort_by(|a, b| a.at_min.total_cmp(&b.at_min));
+            }
+        });
+
+        let mut remover: Option<usize> = None;
+        egui::ScrollArea::vertical()
+            .id_salt("scroll_eventos")
+            .max_height(280.0)
             .show(ui, |ui| {
-                ui.add(
-                    egui::TextEdit::multiline(&mut self.scenario_ron)
-                        .code_editor()
-                        .desired_width(f32::INFINITY)
-                        .desired_rows(28),
-                );
+                for (i, ev) in self.scenario.events.iter_mut().enumerate() {
+                    ui.horizontal(|ui| {
+                        if ui.small_button("✕").clicked() {
+                            remover = Some(i);
+                        }
+                        ui.add(
+                            egui::DragValue::new(&mut ev.at_min)
+                                .suffix(" min")
+                                .range(0.0..=f64::MAX)
+                                .speed(1.0),
+                        );
+                        egui::ComboBox::from_id_salt(("ev_branch", i))
+                            .selected_text(ev.branch.clone())
+                            .width(90.0)
+                            .show_ui(ui, |ui| {
+                                for id in &branch_ids {
+                                    ui.selectable_value(&mut ev.branch, id.clone(), id);
+                                }
+                            });
+                        egui::ComboBox::from_id_salt(("ev_action", i))
+                            .selected_text(action_label(ev.action))
+                            .show_ui(ui, |ui| {
+                                for a in
+                                    [Action::Fault, Action::Repair, Action::Open, Action::Close]
+                                {
+                                    ui.selectable_value(&mut ev.action, a, action_label(a));
+                                }
+                            });
+                    });
+                }
+            });
+        if let Some(i) = remover {
+            self.scenario.events.remove(i);
+        }
+
+        ui.separator();
+        egui::CollapsingHeader::new("Texto RON")
+            .default_open(false)
+            .show(ui, |ui| {
+                if ui.button("Recarregar do RON").clicked() {
+                    self.load_scenario_from_ron();
+                }
+                egui::ScrollArea::both()
+                    .id_salt("scroll_cenario")
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut self.scenario_ron)
+                                .code_editor()
+                                .desired_width(f32::INFINITY)
+                                .desired_rows(12),
+                        );
+                    });
             });
     }
 
@@ -314,6 +415,16 @@ impl App {
                 ui.colored_label(egui::Color32::from_rgb(230, 120, 120), format!("✗ {e}"));
             }
         }
+    }
+}
+
+/// Rótulo em português de uma ação de evento.
+fn action_label(a: Action) -> &'static str {
+    match a {
+        Action::Fault => "Falta",
+        Action::Repair => "Reparo",
+        Action::Open => "Abrir",
+        Action::Close => "Fechar",
     }
 }
 

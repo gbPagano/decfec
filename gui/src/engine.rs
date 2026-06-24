@@ -26,13 +26,16 @@ pub fn load_network(ron: &str) -> Result<Network, String> {
     Ok(net)
 }
 
+/// Parseia um cenário a partir do texto RON.
+pub fn load_scenario(ron: &str) -> Result<Scenario, String> {
+    Scenario::from_ron(ron).map_err(|e| format!("erro de parse no cenário: {e}"))
+}
+
 /// Simula o cenário sobre a rede e calcula DEC/FEC.
 ///
 /// `switch`: vazio/`None` → sistema inteiro ([`Network::line_indices`]); caso
 /// contrário, o conjunto a jusante dessa chave ([`Network::downstream_lines`]).
-pub fn run(net: &Network, scenario_ron: &str, switch: Option<&str>) -> Result<Report, String> {
-    let scenario =
-        Scenario::from_ron(scenario_ron).map_err(|e| format!("erro de parse no cenário: {e}"))?;
+pub fn run(net: &Network, scenario: &Scenario, switch: Option<&str>) -> Result<Report, String> {
     let res = scenario.simulate(net).map_err(|e| e.to_string())?;
 
     let (conjunto, alvo): (BTreeSet<usize>, String) = match switch {
@@ -60,7 +63,8 @@ mod tests {
     #[test]
     fn item_a_bate_gabarito() {
         let net = load_network(REDE).expect("rede de referência deve carregar");
-        let r = run(&net, CENARIO, Some("1")).expect("simulação deve rodar");
+        let scenario = load_scenario(CENARIO).expect("cenário de referência deve carregar");
+        let r = run(&net, &scenario, Some("1")).expect("simulação deve rodar");
         assert_eq!(r.cc, 5400, "Cc do alimentador SD1");
         assert!((r.ind.dec_h - 2.33).abs() < 0.01, "DEC = {}", r.ind.dec_h);
         assert!((r.ind.fec - 1.15).abs() < 0.01, "FEC = {}", r.ind.fec);
