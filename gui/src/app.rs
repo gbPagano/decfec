@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use decfec::fault::{Action, Event, Scenario};
 use decfec::topology::{Branch, Bus, BusKind, Element, Network, State};
 use egui::{Pos2, Vec2};
+use serde::{Deserialize, Serialize};
 
 use crate::canvas::{self, CanvasState, Selection};
 use crate::engine::{self, Report};
@@ -13,6 +14,19 @@ use crate::engine::{self, Report};
 /// tempo de compilação — funciona em WASM, sem filesystem).
 const REDE_PADRAO: &str = include_str!("../../networks/ref-exercise.ron");
 const CENARIO_PADRAO: &str = include_str!("../../scenarios/item_a.ron");
+const CANVAS_POSITIONS_KEY: &str = "decfec.canvas.positions.v1";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SavedCanvasPositions {
+    positions: Vec<SavedNodePosition>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SavedNodePosition {
+    id: String,
+    x: f32,
+    y: f32,
+}
 
 /// Aplicação egui.
 ///
@@ -23,6 +37,8 @@ pub struct App {
     net_ron: String,
     /// Texto RON do cenário de faltas (para importar/recarregar).
     scenario_ron: String,
+    /// Texto RON do layout do canvas (posições dos nós).
+    layout_ron: String,
     /// Cenário em memória (fonte da verdade para o editor de eventos).
     scenario: Scenario,
     /// Chave para o conjunto a jusante; vazio = sistema inteiro.
@@ -38,6 +54,8 @@ pub struct App {
     net_status: Result<String, String>,
     /// Resultado da última simulação.
     report: Option<Result<Report, String>>,
+    /// Mensagem do último import/export de layout.
+    layout_status: Option<Result<String, String>>,
     /// Texto em edição para os terminais do ramo selecionado.
     branch_nodes_editor: Option<(usize, String)>,
     /// Texto em edição para o id da barra selecionada.
@@ -46,10 +64,11 @@ pub struct App {
 
 impl App {
     /// Constrói a aplicação a partir do contexto de criação do eframe.
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let mut app = Self {
             net_ron: REDE_PADRAO.to_string(),
             scenario_ron: CENARIO_PADRAO.to_string(),
+            layout_ron: String::new(),
             scenario: engine::load_scenario(CENARIO_PADRAO)
                 .unwrap_or_else(|_| Scenario { events: Vec::new() }),
             switch: "2".to_string(),
@@ -58,10 +77,14 @@ impl App {
             canvas: CanvasState::default(),
             net_status: Ok(String::new()),
             report: None,
+            layout_status: None,
             branch_nodes_editor: None,
             bus_id_editor: None,
         };
         app.load_network();
+        if let Some(storage) = cc.storage {
+            app.restore_canvas_positions(storage);
+        }
         app
     }
 
@@ -111,6 +134,77 @@ impl App {
             Err(e) => self.report = Some(Err(e)),
         }
     }
+
+    fn restore_canvas_positions(&mut self, storage: &dyn eframe::Storage) {
+        let Some(saved) = storage.get_string(CANVAS_POSITIONS_KEY) else {
+            return;
+        };
+        let Ok(saved) = ron::from_str::<SavedCanvasPositions>(&saved) else {
+            return;
+        };
+        for p in saved.positions {
+            if let std::collections::hash_map::Entry::Occupied(mut entry) =
+                self.positions.entry(p.id)
+            {
+                entry.insert(Pos2::new(p.x, p.y));
+            }
+        }
+    }
+
+    fn save_canvas_positions(&self, storage: &mut dyn eframe::Storage) {
+        if let Ok(text) = self.canvas_positions_to_ron() {
+            storage.set_string(CANVAS_POSITIONS_KEY, text);
+        }
+    }
+
+    fn canvas_positions_to_ron(&self) -> Result<String, ron::Error> {
+        let mut positions: Vec<SavedNodePosition> = self
+            .positions
+            .iter()
+            .map(|(id, p)| SavedNodePosition {
+                id: id.clone(),
+                x: p.x,
+                y: p.y,
+            })
+            .collect();
+        positions.sort_by(|a, b| a.id.cmp(&b.id));
+
+        let cfg = ron::ser::PrettyConfig::default();
+        ron::ser::to_string_pretty(&SavedCanvasPositions { positions }, cfg)
+    }
+
+    fn export_canvas_layout(&mut self) {
+        match self.canvas_positions_to_ron() {
+            Ok(text) => {
+                self.layout_ron = text;
+                self.layout_status =
+                    Some(Ok(format!("{} posições exportadas", self.positions.len())));
+            }
+            Err(e) => self.layout_status = Some(Err(format!("erro ao exportar layout: {e}"))),
+        }
+    }
+
+    fn import_canvas_layout(&mut self) {
+        let saved = match ron::from_str::<SavedCanvasPositions>(&self.layout_ron) {
+            Ok(saved) => saved,
+            Err(e) => {
+                self.layout_status = Some(Err(format!("erro de parse no layout: {e}")));
+                return;
+            }
+        };
+
+        let mut applied = 0;
+        for p in saved.positions {
+            if let std::collections::hash_map::Entry::Occupied(mut entry) =
+                self.positions.entry(p.id)
+            {
+                entry.insert(Pos2::new(p.x, p.y));
+                applied += 1;
+            }
+        }
+        self.canvas.request_fit();
+        self.layout_status = Some(Ok(format!("{applied} posições aplicadas")));
+    }
 }
 
 impl eframe::App for App {
@@ -132,6 +226,10 @@ impl eframe::App for App {
             .show_inside(ui, |ui| self.painel_cenario(ui));
 
         egui::CentralPanel::default().show_inside(ui, |ui| self.painel_canvas(ui));
+    }
+
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        self.save_canvas_positions(storage);
     }
 }
 
@@ -182,6 +280,36 @@ impl App {
                                 .code_editor()
                                 .desired_width(f32::INFINITY)
                                 .desired_rows(20),
+                        );
+                    });
+            });
+
+        ui.separator();
+        egui::CollapsingHeader::new("Layout do canvas")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    if ui.button("Exportar layout").clicked() {
+                        self.export_canvas_layout();
+                    }
+                    if ui.button("Recarregar layout").clicked() {
+                        self.import_canvas_layout();
+                    }
+                });
+                if let Some(status) = &self.layout_status {
+                    match status {
+                        Ok(msg) => ui.colored_label(egui::Color32::from_rgb(120, 200, 120), msg),
+                        Err(e) => ui.colored_label(egui::Color32::from_rgb(230, 120, 120), e),
+                    };
+                }
+                egui::ScrollArea::both()
+                    .id_salt("scroll_layout")
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut self.layout_ron)
+                                .code_editor()
+                                .desired_width(f32::INFINITY)
+                                .desired_rows(10),
                         );
                     });
             });
