@@ -1,30 +1,37 @@
-//! Topologia da rede de distribuição como um grafo.
+//! Topologia da rede de distribuição como um grafo com ramos multi-terminais.
 //!
 //! Modelo: os **barramentos** (nós) são declarados explicitamente em
-//! [`Network::buses`]; cada um tem um `id` único e um [`BusKind`]. Os **ramos**
-//! (arestas) ligam dois barramentos *já declarados* e são de dois tipos:
+//! [`Network::buses`]. Uma chave é modelada como um nó (`BusKind::Switch`), com
+//! estado normal aberto/fechado. Os **ramos** ([`Branch`]) conectam dois ou mais
+//! nós e carregam consumidores.
 //!
-//! - [`Element::Line`]   — trecho de rede que carrega um bloco de consumidores
-//!   (o número em itálico do diagrama). Sempre conduz.
-//! - [`Element::Switch`] — uma chave manobrável, sem carga. `Open` representa
-//!   uma chave NA (*Normalmente Aberta* / tie); `Closed`, uma chave NF
-//!   (*Normalmente Fechada* / seccionadora).
-//!
-//! Essa separação (carga nas linhas, manobra nas chaves) deixa o cálculo de
-//! conectividade trivial e é o que o motor de faltas vai usar depois.
+//! Isso evita criar barramentos artificiais dos dois lados de cada chave. Um
+//! bloco do diagrama pode ser declarado como um único ramo que interliga todas
+//! as chaves que encostam nele, por exemplo `nodes: ["3", "4", "5", "NA1"]`.
 
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+/// Estado de uma chave.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum State {
+    /// Fechada - conduz.
+    Closed,
+    /// Aberta - não conduz.
+    Open,
+}
+
 /// Tipo de um barramento.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BusKind {
-    /// Subestação — injeta energia (uma fonte do sistema).
+    /// Subestação - injeta energia (uma fonte do sistema).
     Substation,
-    /// Ponto de conexão sem fonte (junção, derivação, ponto de chave).
+    /// Ponto de conexão sem fonte nem manobra.
     Junction,
+    /// Chave manobrável. `Open` representa NA/tie; `Closed`, NF/seccionadora.
+    Switch { normal: State },
 }
 
 /// Barramento (nó) da rede.
@@ -38,67 +45,60 @@ impl Bus {
     pub fn is_source(&self) -> bool {
         self.kind == BusKind::Substation
     }
-}
 
-/// Estado de uma chave.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum State {
-    /// Fechada — conduz.
-    Closed,
-    /// Aberta — não conduz.
-    Open,
-}
-
-/// O que um ramo representa fisicamente.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum Element {
-    /// Trecho com um bloco de `consumers` unidades consumidoras. Sempre conduz.
-    Line { consumers: u32 },
-    /// Chave manobrável (sem carga). `normal` é o estado em operação normal.
-    Switch { normal: State },
-}
-
-/// Ramo do grafo: liga `from` a `to` por um [`Element`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Branch {
-    /// Identificador opcional (ex.: `"1"`, `"22"`, `"NA3"`). Obrigatório na
-    /// prática para chaves, pois é por ele que as manobras as referenciam.
-    #[serde(default)]
-    pub id: Option<String>,
-    pub from: String,
-    pub to: String,
-    pub element: Element,
-}
-
-impl Branch {
-    /// Consumidores neste ramo (0 para chaves).
-    pub fn consumers(&self) -> u32 {
-        match self.element {
-            Element::Line { consumers } => consumers,
-            Element::Switch { .. } => 0,
-        }
+    pub fn is_switch(&self) -> bool {
+        matches!(self.kind, BusKind::Switch { .. })
     }
 
-    /// `true` se for uma chave NA (chave normalmente aberta / tie).
     pub fn is_tie(&self) -> bool {
         matches!(
-            self.element,
-            Element::Switch {
+            self.kind,
+            BusKind::Switch {
                 normal: State::Open
             }
         )
     }
 
-    /// `true` se for uma chave (NA ou NF).
-    pub fn is_switch(&self) -> bool {
-        matches!(self.element, Element::Switch { .. })
+    pub fn conducts_normally(&self) -> bool {
+        match self.kind {
+            BusKind::Substation | BusKind::Junction => true,
+            BusKind::Switch { normal } => normal == State::Closed,
+        }
+    }
+}
+
+/// O que um ramo representa fisicamente.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum Element {
+    /// Trecho/bloco com `consumers` unidades consumidoras.
+    Line { consumers: u32 },
+}
+
+/// Ramo do grafo: interliga dois ou mais nós por um [`Element`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Branch {
+    /// Identificador opcional (ex.: `"tr_3_4"`, `"bloco_700"`). Obrigatório na
+    /// prática para faltas, pois é por ele que os eventos as referenciam.
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Nós terminais do ramo. Pode ter mais de dois nós.
+    pub nodes: Vec<String>,
+    pub element: Element,
+}
+
+impl Branch {
+    /// Consumidores neste ramo.
+    pub fn consumers(&self) -> u32 {
+        match self.element {
+            Element::Line { consumers } => consumers,
+        }
     }
 
-    /// Rótulo legível para mensagens (id, ou os extremos se não houver id).
+    /// Rótulo legível para mensagens (id, ou os terminais se não houver id).
     pub fn label(&self) -> String {
         match &self.id {
             Some(id) => id.clone(),
-            None => format!("{}–{}", self.from, self.to),
+            None => self.nodes.join("-"),
         }
     }
 }
@@ -130,6 +130,15 @@ impl Network {
             .collect()
     }
 
+    /// Ids das chaves declaradas como nós.
+    pub fn switches(&self) -> Vec<&str> {
+        self.buses
+            .iter()
+            .filter(|b| b.is_switch())
+            .map(|b| b.id.as_str())
+            .collect()
+    }
+
     /// Total de unidades consumidoras da rede (o `Cc` do sistema inteiro).
     pub fn total_consumers(&self) -> u32 {
         self.branches.iter().map(Branch::consumers).sum()
@@ -139,8 +148,9 @@ impl Network {
     pub fn adjacency(&self) -> HashMap<&str, Vec<usize>> {
         let mut adj: HashMap<&str, Vec<usize>> = HashMap::new();
         for (i, b) in self.branches.iter().enumerate() {
-            adj.entry(b.from.as_str()).or_default().push(i);
-            adj.entry(b.to.as_str()).or_default().push(i);
+            for node in &b.nodes {
+                adj.entry(node.as_str()).or_default().push(i);
+            }
         }
         adj
     }
@@ -149,7 +159,6 @@ impl Network {
     pub fn validate(&self) -> Result<(), TopologyError> {
         let mut problems = Vec::new();
 
-        // Ids de barramento únicos.
         let mut seen_buses = BTreeSet::new();
         for bus in &self.buses {
             if !seen_buses.insert(bus.id.as_str()) {
@@ -161,35 +170,46 @@ impl Network {
             problems.push("a rede não tem nenhuma subestação (kind: Substation)".into());
         }
 
-        // Mundo fechado: todo extremo de ramo precisa ser um barramento declarado.
         let mut seen_branch_ids = BTreeSet::new();
         for b in &self.branches {
-            for end in [&b.from, &b.to] {
-                if !seen_buses.contains(end.as_str()) {
+            let mut unique_nodes = BTreeSet::new();
+            for node in &b.nodes {
+                if !seen_buses.contains(node.as_str()) {
                     problems.push(format!(
-                        "ramo '{}' referencia barramento inexistente '{end}'",
+                        "ramo '{}' referencia barramento inexistente '{node}'",
                         b.label()
                     ));
                 }
+                if !unique_nodes.insert(node.as_str()) {
+                    problems.push(format!(
+                        "ramo '{}' referencia o nó '{}' mais de uma vez",
+                        b.label(),
+                        node
+                    ));
+                }
             }
-            if b.from == b.to {
+            if unique_nodes.len() < 2 {
                 problems.push(format!(
-                    "ramo '{}' liga o barramento '{}' a si mesmo",
-                    b.label(),
-                    b.from
+                    "ramo '{}' precisa interligar ao menos dois nós distintos",
+                    b.label()
                 ));
             }
-            if let Some(id) = &b.id
-                && !seen_branch_ids.insert(id.as_str())
-            {
-                problems.push(format!("id de ramo duplicado: '{id}'"));
+            if let Some(id) = &b.id {
+                if !seen_branch_ids.insert(id.as_str()) {
+                    problems.push(format!("id de ramo duplicado: '{id}'"));
+                }
+                if seen_buses.contains(id.as_str()) {
+                    problems.push(format!(
+                        "id de ramo '{id}' colide com id de barramento/chave"
+                    ));
+                }
             }
         }
 
-        // Conectividade considerando TODOS os ramos (chaves abertas inclusas):
-        // a rede física deve ser uma peça só.
+        // Conectividade física: ignora estado das chaves, pois a rede existente
+        // deve ser uma peça só mesmo com NAs abertas em operação normal.
         if let Some(start) = self.buses.first() {
-            let reachable = self.reachable_from(&start.id, |_| true);
+            let reachable = self.reachable_from_with(&start.id, |_| true, |_, _| true);
             for bus in &self.buses {
                 if !reachable.contains(bus.id.as_str()) {
                     problems.push(format!(
@@ -207,33 +227,59 @@ impl Network {
         }
     }
 
-    /// Barramentos alcançáveis a partir de `start` percorrendo apenas os ramos
-    /// para os quais `conduz(branch)` é verdadeiro. Base para o motor de faltas.
+    /// Barramentos alcançáveis a partir de `start`, usando o estado normal das
+    /// chaves e percorrendo apenas os ramos aceitos por `conduz_branch`.
     pub fn reachable_from<'a>(
         &'a self,
         start: &'a str,
-        conduz: impl Fn(&Branch) -> bool,
+        conduz_branch: impl Fn(&Branch) -> bool,
     ) -> BTreeSet<&'a str> {
+        self.reachable_from_with(
+            start,
+            |b| conduz_branch(b),
+            |_, bus| bus.conducts_normally(),
+        )
+    }
+
+    /// Barramentos alcançáveis com controle explícito de condução de ramos e nós.
+    pub fn reachable_from_with<'a, FB, FN>(
+        &'a self,
+        start: &'a str,
+        conduz_branch: FB,
+        conduz_node: FN,
+    ) -> BTreeSet<&'a str>
+    where
+        FB: Fn(&Branch) -> bool,
+        FN: Fn(usize, &Bus) -> bool,
+    {
+        let Some(start_idx) = self.bus_index(start) else {
+            return BTreeSet::new();
+        };
         let adj = self.adjacency();
         let mut visited = BTreeSet::new();
-        let mut stack = vec![start];
-        while let Some(bus) = stack.pop() {
-            if !visited.insert(bus) {
+        let mut stack = vec![start_idx];
+
+        while let Some(bus_idx) = stack.pop() {
+            let bus = &self.buses[bus_idx];
+            if !conduz_node(bus_idx, bus) || !visited.insert(bus.id.as_str()) {
                 continue;
             }
-            for &i in adj.get(bus).map(Vec::as_slice).unwrap_or(&[]) {
-                let b = &self.branches[i];
-                if !conduz(b) {
+            for &branch_idx in adj.get(bus.id.as_str()).map(Vec::as_slice).unwrap_or(&[]) {
+                let branch = &self.branches[branch_idx];
+                if !conduz_branch(branch) {
                     continue;
                 }
-                let other = if b.from == bus {
-                    b.to.as_str()
-                } else {
-                    b.from.as_str()
-                };
-                stack.push(other);
+                for node in &branch.nodes {
+                    if node == &bus.id {
+                        continue;
+                    }
+                    if let Some(next_idx) = self.bus_index(node) {
+                        stack.push(next_idx);
+                    }
+                }
             }
         }
+
         visited
     }
 
@@ -244,7 +290,18 @@ impl Network {
             .position(|b| b.id.as_deref() == Some(id))
     }
 
-    /// Índices de todos os ramos do tipo linha (que carregam consumidores).
+    /// Índice do barramento com o id dado.
+    pub fn bus_index(&self, id: &str) -> Option<usize> {
+        self.buses.iter().position(|b| b.id == id)
+    }
+
+    /// Índice da chave com o id dado.
+    pub fn switch_index(&self, id: &str) -> Option<usize> {
+        self.bus_index(id)
+            .filter(|&i| matches!(self.buses[i].kind, BusKind::Switch { .. }))
+    }
+
+    /// Índices de todos os ramos-linha.
     pub fn line_indices(&self) -> BTreeSet<usize> {
         self.branches
             .iter()
@@ -259,67 +316,58 @@ impl Network {
         lines.iter().map(|&i| self.branches[i].consumers()).sum()
     }
 
-    /// Barramentos energizados em uma configuração arbitrária: BFS a partir de
-    /// todas as fontes, onde `conduz(idx, branch)` decide se cada ramo conduz.
-    /// É o tijolo reusado tanto por `downstream_lines` (config normal) quanto
-    /// pelo motor de simulação (config vigente + ramos em falta).
-    pub fn energized<F: Fn(usize, &Branch) -> bool>(&self, conduz: F) -> BTreeSet<&str> {
-        let adj = self.adjacency();
-        let mut visited = BTreeSet::new();
-        let mut stack: Vec<&str> = self
-            .buses
-            .iter()
-            .filter(|b| b.is_source())
-            .map(|b| b.id.as_str())
-            .collect();
-        while let Some(bus) = stack.pop() {
-            if !visited.insert(bus) {
+    /// Barramentos energizados em uma configuração arbitrária.
+    pub fn energized<FB, FN>(&self, conduz_branch: FB, conduz_node: FN) -> BTreeSet<&str>
+    where
+        FB: Fn(usize, &Branch) -> bool,
+        FN: Fn(usize, &Bus) -> bool,
+    {
+        let mut energ = BTreeSet::new();
+        for (i, source) in self.buses.iter().enumerate().filter(|(_, b)| b.is_source()) {
+            if !conduz_node(i, source) {
                 continue;
             }
-            for &i in adj.get(bus).map(Vec::as_slice).unwrap_or(&[]) {
-                let b = &self.branches[i];
-                if !conduz(i, b) {
-                    continue;
-                }
-                let other = if b.from == bus {
-                    b.to.as_str()
-                } else {
-                    b.from.as_str()
-                };
-                stack.push(other);
-            }
+            energ.extend(self.reachable_from_with(
+                &source.id,
+                |b| {
+                    let idx = self
+                        .branches
+                        .iter()
+                        .position(|candidate| std::ptr::eq(candidate, b))
+                        .expect("ramo veio da própria rede");
+                    conduz_branch(idx, b)
+                },
+                |idx, bus| conduz_node(idx, bus),
+            ));
         }
-        visited
+        energ
     }
 
     /// Ramos-linha **a jusante** da chave `switch_id` na configuração normal:
-    /// as linhas que perdem energia se apenas aquela chave for aberta. `None`
-    /// se o id não existir.
+    /// as linhas que perdem energia se apenas aquela chave for aberta.
     pub fn downstream_lines(&self, switch_id: &str) -> Option<BTreeSet<usize>> {
-        let x = self.branch_index(switch_id)?;
-        let normal = self.energized(|_, b| conducts_normally(b));
-        let cut = self.energized(|i, b| i != x && conducts_normally(b));
-        let downstream_buses: BTreeSet<&str> = normal.difference(&cut).copied().collect();
+        let switch_idx = self.switch_index(switch_id)?;
+        let normal = self.energized(|_, _| true, |_, bus| bus.conducts_normally());
+        let cut = self.energized(
+            |_, _| true,
+            |i, bus| i != switch_idx && bus.conducts_normally(),
+        );
+
         let lines = self
-            .branches
-            .iter()
-            .enumerate()
-            .filter(|(_, b)| matches!(b.element, Element::Line { .. }))
-            .filter(|(_, b)| {
-                downstream_buses.contains(b.from.as_str())
-                    && downstream_buses.contains(b.to.as_str())
-            })
-            .map(|(i, _)| i)
+            .line_indices()
+            .into_iter()
+            .filter(|&i| self.line_served(i, &normal) && !self.line_served(i, &cut))
             .collect();
         Some(lines)
     }
-}
 
-/// Um ramo conduz na configuração normal? (linha sempre; chave só se NF/fechada).
-fn conducts_normally(b: &Branch) -> bool {
-    match b.element {
-        Element::Switch { normal } => normal == State::Closed,
-        Element::Line { .. } => true,
+    /// Um ramo-linha está servido se ao menos um de seus nós terminais está
+    /// energizado. Chaves abertas não entram no conjunto `energized`.
+    pub fn line_served(&self, branch_idx: usize, energized: &BTreeSet<&str>) -> bool {
+        self.branches[branch_idx]
+            .nodes
+            .iter()
+            .any(|node| energized.contains(node.as_str()))
     }
 }
 
@@ -347,24 +395,21 @@ mod tests {
         Network(
             buses: [
                 (id: "SD_A", kind: Substation),
-                (id: "a1", kind: Junction),
-                (id: "a2", kind: Junction),
-                (id: "a3", kind: Junction),
-                (id: "a4", kind: Junction),
+                (id: "dA",   kind: Switch(normal: Closed)),
+                (id: "a1",   kind: Junction),
+                (id: "sa",   kind: Switch(normal: Closed)),
+                (id: "a2",   kind: Junction),
+                (id: "NA",   kind: Switch(normal: Open)),
                 (id: "SD_B", kind: Substation),
-                (id: "b1", kind: Junction),
-                (id: "b2", kind: Junction),
+                (id: "dB",   kind: Switch(normal: Closed)),
+                (id: "b1",   kind: Junction),
             ],
             branches: [
-                (id: Some("dA"), from: "SD_A", to: "a1", element: Switch(normal: Closed)),
-                (from: "a1", to: "a2", element: Line(consumers: 500)),
-                (id: Some("sa"), from: "a2", to: "a3", element: Switch(normal: Closed)),
-                (from: "a3", to: "a4", element: Line(consumers: 300)),
-
-                (id: Some("dB"), from: "SD_B", to: "b1", element: Switch(normal: Closed)),
-                (from: "b1", to: "b2", element: Line(consumers: 400)),
-
-                (id: Some("NA"), from: "a4", to: "b2", element: Switch(normal: Open)),
+                (id: Some("feed_a"), nodes: ["SD_A", "dA"], element: Line(consumers: 0)),
+                (id: Some("A"),      nodes: ["dA", "a1", "sa"], element: Line(consumers: 500)),
+                (id: Some("B"),      nodes: ["sa", "a2", "NA"], element: Line(consumers: 300)),
+                (id: Some("feed_b"), nodes: ["SD_B", "dB"], element: Line(consumers: 0)),
+                (id: Some("C"),      nodes: ["dB", "b1", "NA"], element: Line(consumers: 400)),
             ],
         )
     "#;
@@ -377,7 +422,7 @@ mod tests {
     fn parses_and_counts() {
         let net = sample();
         assert_eq!(net.total_consumers(), 1200);
-        assert_eq!(net.buses.len(), 8);
+        assert_eq!(net.buses.len(), 9);
         assert_eq!(net.sources(), ["SD_A", "SD_B"]);
         net.validate().expect("rede válida");
     }
@@ -385,20 +430,27 @@ mod tests {
     #[test]
     fn tie_is_recognized() {
         let net = sample();
-        let na = net.branches.iter().find(|b| b.label() == "NA").unwrap();
+        let na = net.buses.iter().find(|b| b.id == "NA").unwrap();
         assert!(na.is_tie());
     }
 
     #[test]
     fn reachability_respects_open_switches() {
         let net = sample();
-        // Em operação normal (NA aberta), partindo de SD_A não se alcança o lado B.
-        let energizado = net.reachable_from("SD_A", |b| match b.element {
-            Element::Switch { normal } => normal == State::Closed,
-            Element::Line { .. } => true,
-        });
-        assert!(energizado.contains("a4"));
-        assert!(!energizado.contains("b2"));
+        let energizado = net.reachable_from("SD_A", |_| true);
+        assert!(energizado.contains("a2"));
+        assert!(!energizado.contains("b1"));
+    }
+
+    #[test]
+    fn downstream_uses_service_loss_instead_of_all_terminals() {
+        let net = sample();
+        let down = net.downstream_lines("sa").unwrap();
+        let ids: BTreeSet<&str> = down
+            .iter()
+            .filter_map(|&i| net.branches[i].id.as_deref())
+            .collect();
+        assert_eq!(ids, BTreeSet::from(["B"]));
     }
 
     #[test]
@@ -406,8 +458,7 @@ mod tests {
         let mut net = sample();
         net.branches.push(Branch {
             id: Some("solta".into()),
-            from: "a4".into(),
-            to: "fantasma".into(), // não declarado em `buses`
+            nodes: vec!["a2".into(), "fantasma".into()],
             element: Element::Line { consumers: 10 },
         });
         assert!(net.validate().is_err());

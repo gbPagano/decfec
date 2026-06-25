@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use egui::{Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2};
 
-use decfec::topology::{Branch, Element, Network, State};
+use decfec::topology::{Branch, BusKind, Element, Network, State};
 
 /// Espaçamento entre camadas (eixo X) e entre nós de uma camada (eixo Y), em
 /// coordenadas-mundo.
@@ -86,14 +86,15 @@ pub fn layout(net: &Network) -> HashMap<String, Pos2> {
         if let Some(branches) = adj.get(u) {
             for &bi in branches {
                 let b = &net.branches[bi];
-                let v = if b.from == u {
-                    b.to.as_str()
-                } else {
-                    b.from.as_str()
-                };
-                if !depth.contains_key(v) {
-                    depth.insert(v, du + 1);
-                    queue.push_back(v);
+                for v in &b.nodes {
+                    if v == u {
+                        continue;
+                    }
+                    let v = v.as_str();
+                    if !depth.contains_key(v) {
+                        depth.insert(v, du + 1);
+                        queue.push_back(v);
+                    }
                 }
             }
         }
@@ -206,30 +207,42 @@ fn paint(
 ) {
     // Arestas primeiro, para os nós ficarem por cima.
     for (i, b) in net.branches.iter().enumerate() {
-        let (Some(&p_from), Some(&p_to)) = (positions.get(&b.from), positions.get(&b.to)) else {
+        let points: Vec<Pos2> = b
+            .nodes
+            .iter()
+            .filter_map(|node| positions.get(node).copied())
+            .collect();
+        if points.len() < 2 {
             continue;
-        };
-        let a = to_screen(center, pan, zoom, p_from);
-        let z = to_screen(center, pan, zoom, p_to);
+        }
+        let screen_points: Vec<Pos2> = points
+            .iter()
+            .map(|&p| to_screen(center, pan, zoom, p))
+            .collect();
+        let label_pos = midpoint(&screen_points);
         let (mut cor, mut largura, tracejada) = edge_style(&b.element);
         if st.selection == Some(Selection::Branch(i)) {
             cor = Color32::from_rgb(250, 240, 120);
             largura += 1.5;
         }
 
-        if tracejada {
-            painter.add(egui::Shape::dashed_line(
-                &[a, z],
-                Stroke::new(largura, cor),
-                8.0,
-                6.0,
-            ));
+        if screen_points.len() == 2 {
+            paint_segment(
+                painter,
+                screen_points[0],
+                screen_points[1],
+                largura,
+                cor,
+                tracejada,
+            );
         } else {
-            painter.line_segment([a, z], Stroke::new(largura, cor));
+            for &p in &screen_points {
+                paint_segment(painter, label_pos, p, largura, cor, tracejada);
+            }
         }
 
         painter.text(
-            a.lerp(z, 0.5),
+            label_pos,
             egui::Align2::CENTER_CENTER,
             edge_label(b),
             FontId::proportional(11.0),
@@ -242,10 +255,21 @@ fn paint(
             continue;
         };
         let c = to_screen(center, pan, zoom, p);
-        let (preenchimento, mut contorno) = if bus.is_source() {
-            (Color32::from_rgb(80, 130, 230), Color32::WHITE)
-        } else {
-            (Color32::from_gray(70), Color32::from_gray(180))
+        let (preenchimento, mut contorno) = match bus.kind {
+            BusKind::Substation => (Color32::from_rgb(80, 130, 230), Color32::WHITE),
+            BusKind::Junction => (Color32::from_gray(70), Color32::from_gray(180)),
+            BusKind::Switch {
+                normal: State::Closed,
+            } => (
+                Color32::from_rgb(70, 110, 70),
+                Color32::from_rgb(130, 230, 130),
+            ),
+            BusKind::Switch {
+                normal: State::Open,
+            } => (
+                Color32::from_rgb(110, 80, 45),
+                Color32::from_rgb(240, 170, 70),
+            ),
         };
         let mut largura = 1.5;
         if st.selection == Some(Selection::Bus(bus.id.clone())) {
@@ -271,6 +295,31 @@ fn to_screen(center: Pos2, pan: Vec2, zoom: f32, w: Pos2) -> Pos2 {
 
 fn to_world(center: Pos2, pan: Vec2, zoom: f32, s: Pos2) -> Pos2 {
     ((s - center - pan) / zoom).to_pos2()
+}
+
+fn midpoint(points: &[Pos2]) -> Pos2 {
+    let sum = points.iter().fold(Vec2::ZERO, |acc, p| acc + p.to_vec2());
+    (sum / points.len() as f32).to_pos2()
+}
+
+fn paint_segment(
+    painter: &egui::Painter,
+    a: Pos2,
+    z: Pos2,
+    largura: f32,
+    cor: Color32,
+    tracejada: bool,
+) {
+    if tracejada {
+        painter.add(egui::Shape::dashed_line(
+            &[a, z],
+            Stroke::new(largura, cor),
+            8.0,
+            6.0,
+        ));
+    } else {
+        painter.line_segment([a, z], Stroke::new(largura, cor));
+    }
 }
 
 /// Barramento sob o ponto de tela `p` (o mais próximo dentro da tolerância).
@@ -302,9 +351,25 @@ fn edge_at(
         .iter()
         .enumerate()
         .filter_map(|(i, b)| {
-            let a = to_screen(center, pan, zoom, *positions.get(&b.from)?);
-            let z = to_screen(center, pan, zoom, *positions.get(&b.to)?);
-            Some((i, dist_to_segment(p, a, z)))
+            let points: Vec<Pos2> = b
+                .nodes
+                .iter()
+                .filter_map(|node| positions.get(node).copied())
+                .map(|w| to_screen(center, pan, zoom, w))
+                .collect();
+            if points.len() < 2 {
+                return None;
+            }
+            let d = if points.len() == 2 {
+                dist_to_segment(p, points[0], points[1])
+            } else {
+                let m = midpoint(&points);
+                points
+                    .iter()
+                    .map(|&point| dist_to_segment(p, m, point))
+                    .fold(f32::INFINITY, f32::min)
+            };
+            Some((i, d))
         })
         .filter(|&(_, d)| d <= HIT_SLOP)
         .min_by(|a, b| a.1.total_cmp(&b.1))
@@ -348,14 +413,6 @@ fn fit(positions: &HashMap<String, Pos2>, rect: Rect) -> Option<(Vec2, f32)> {
 /// Cor, largura e se é tracejada, conforme o tipo de ramo.
 fn edge_style(el: &Element) -> (Color32, f32, bool) {
     match el {
-        // Chave NA (tie): laranja tracejado.
-        Element::Switch {
-            normal: State::Open,
-        } => (Color32::from_rgb(230, 160, 60), 2.0, true),
-        // Chave NF (seccionadora): verde.
-        Element::Switch {
-            normal: State::Closed,
-        } => (Color32::from_rgb(110, 200, 110), 2.5, false),
         // Linha: cinza-claro; mais grossa se carrega consumidores.
         Element::Line { consumers } => {
             let l = if *consumers > 0 { 3.0 } else { 1.5 };

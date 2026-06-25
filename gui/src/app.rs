@@ -38,6 +38,8 @@ pub struct App {
     net_status: Result<String, String>,
     /// Resultado da última simulação.
     report: Option<Result<Report, String>>,
+    /// Texto em edição para os terminais do ramo selecionado.
+    branch_nodes_editor: Option<(usize, String)>,
 }
 
 impl App {
@@ -54,6 +56,7 @@ impl App {
             canvas: CanvasState::default(),
             net_status: Ok(String::new()),
             report: None,
+            branch_nodes_editor: None,
         };
         app.load_network();
         app
@@ -82,6 +85,7 @@ impl App {
         self.canvas.request_fit();
         self.canvas.selection = None;
         self.report = None;
+        self.branch_nodes_editor = None;
     }
 
     /// Roda a simulação com a rede carregada e o cenário/chave atuais.
@@ -191,22 +195,54 @@ impl App {
 
         match sel {
             Selection::Bus(id) => {
+                self.branch_nodes_editor = None;
                 let Some(bus) = net.buses.iter_mut().find(|b| b.id == id) else {
                     return;
                 };
                 ui.label(format!("Barramento: {}", bus.id));
                 ui.horizontal(|ui| {
                     ui.label("Tipo:");
-                    ui.radio_value(&mut bus.kind, BusKind::Substation, "Subestação");
-                    ui.radio_value(&mut bus.kind, BusKind::Junction, "Junção");
+                    if ui
+                        .selectable_label(bus.kind == BusKind::Substation, "Subestação")
+                        .clicked()
+                    {
+                        bus.kind = BusKind::Substation;
+                    }
+                    if ui
+                        .selectable_label(bus.kind == BusKind::Junction, "Junção")
+                        .clicked()
+                    {
+                        bus.kind = BusKind::Junction;
+                    }
+                    if ui
+                        .selectable_label(matches!(bus.kind, BusKind::Switch { .. }), "Chave")
+                        .clicked()
+                        && !matches!(bus.kind, BusKind::Switch { .. })
+                    {
+                        bus.kind = BusKind::Switch {
+                            normal: State::Closed,
+                        };
+                    }
                 });
+                if let BusKind::Switch { normal } = &mut bus.kind {
+                    ui.horizontal(|ui| {
+                        ui.label("Normal:");
+                        ui.radio_value(normal, State::Closed, "NF (fechada)");
+                        ui.radio_value(normal, State::Open, "NA / tie (aberta)");
+                    });
+                }
             }
             Selection::Branch(i) => {
-                // Ids de barras para os combos (clonados antes do &mut no ramo).
-                let bus_ids: Vec<String> = net.buses.iter().map(|b| b.id.clone()).collect();
                 let Some(b) = net.branches.get_mut(i) else {
                     return;
                 };
+                if self
+                    .branch_nodes_editor
+                    .as_ref()
+                    .is_none_or(|(idx, _)| *idx != i)
+                {
+                    self.branch_nodes_editor = Some((i, b.nodes.join(", ")));
+                }
                 ui.label("Ramo");
 
                 let mut id_buf = b.id.clone().unwrap_or_default();
@@ -221,28 +257,25 @@ impl App {
                     b.id = (!id_buf.trim().is_empty()).then_some(id_buf);
                 }
 
-                combo_bus(ui, "de:", "from", &mut b.from, &bus_ids);
-                combo_bus(ui, "para:", "to", &mut b.to, &bus_ids);
+                let nodes_buf = &mut self
+                    .branch_nodes_editor
+                    .as_mut()
+                    .expect("editor inicializado acima")
+                    .1;
+                if ui
+                    .horizontal(|ui| {
+                        ui.label("nós:");
+                        ui.text_edit_singleline(nodes_buf)
+                    })
+                    .inner
+                    .changed()
+                {
+                    b.nodes = parse_branch_nodes(nodes_buf);
+                }
 
-                ui.horizontal(|ui| {
-                    ui.label("Tipo:");
-                    let eh_linha = matches!(b.element, Element::Line { .. });
-                    if ui.selectable_label(eh_linha, "Linha").clicked() && !eh_linha {
-                        b.element = Element::Line { consumers: 0 };
-                    }
-                    if ui.selectable_label(!eh_linha, "Chave").clicked() && eh_linha {
-                        b.element = Element::Switch {
-                            normal: State::Closed,
-                        };
-                    }
-                });
                 match &mut b.element {
                     Element::Line { consumers } => {
                         ui.add(egui::DragValue::new(consumers).prefix("consumidores: "));
-                    }
-                    Element::Switch { normal } => {
-                        ui.radio_value(normal, State::Closed, "NF (fechada)");
-                        ui.radio_value(normal, State::Open, "NA / tie (aberta)");
                     }
                 }
             }
@@ -344,11 +377,11 @@ impl App {
         let id = unique_id(net.branches.iter().filter_map(|b| b.id.as_deref()), "ramo");
         net.branches.push(Branch {
             id: Some(id),
-            from,
-            to,
+            nodes: vec![from, to],
             element: Element::Line { consumers: 0 },
         });
         self.canvas.selection = Some(Selection::Branch(net.branches.len() - 1));
+        self.branch_nodes_editor = None;
         self.revalidate();
     }
 
@@ -363,7 +396,7 @@ impl App {
         match sel {
             Selection::Bus(id) => {
                 net.buses.retain(|b| b.id != id);
-                net.branches.retain(|b| b.from != id && b.to != id);
+                net.branches.retain(|b| !b.nodes.iter().any(|n| n == &id));
                 self.positions.remove(&id);
             }
             Selection::Branch(i) => {
@@ -372,6 +405,7 @@ impl App {
                 }
             }
         }
+        self.branch_nodes_editor = None;
         self.revalidate();
     }
 
@@ -381,8 +415,8 @@ impl App {
         let switch_ids: Vec<String> = self
             .net
             .iter()
-            .flat_map(|n| n.branches.iter().filter(|b| b.is_switch()))
-            .filter_map(|b| b.id.clone())
+            .flat_map(|n| n.buses.iter().filter(|b| b.is_switch()))
+            .map(|b| b.id.clone())
             .collect();
         let branch_ids: Vec<String> = self
             .net
@@ -390,6 +424,8 @@ impl App {
             .flat_map(|n| n.branches.iter())
             .filter_map(|b| b.id.clone())
             .collect();
+        let mut event_ids = branch_ids.clone();
+        event_ids.extend(switch_ids.iter().cloned());
 
         ui.add_space(4.0);
         ui.horizontal(|ui| {
@@ -451,7 +487,7 @@ impl App {
                             .selected_text(ev.branch.clone())
                             .width(90.0)
                             .show_ui(ui, |ui| {
-                                for id in &branch_ids {
+                                for id in &event_ids {
                                     ui.selectable_value(&mut ev.branch, id.clone(), id);
                                 }
                             });
@@ -540,6 +576,14 @@ fn unique_id<'a>(existing: impl Iterator<Item = &'a str>, prefixo: &str) -> Stri
         .expect("sequência infinita sempre acha um id livre")
 }
 
+fn parse_branch_nodes(text: &str) -> Vec<String> {
+    text.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
 /// Rótulo em português de uma ação de evento.
 fn action_label(a: Action) -> &'static str {
     match a {
@@ -548,18 +592,4 @@ fn action_label(a: Action) -> &'static str {
         Action::Open => "Abrir",
         Action::Close => "Fechar",
     }
-}
-
-/// Combo para escolher um barramento (por id) num campo `from`/`to` de ramo.
-fn combo_bus(ui: &mut egui::Ui, label: &str, salt: &str, current: &mut String, ids: &[String]) {
-    ui.horizontal(|ui| {
-        ui.label(label);
-        egui::ComboBox::from_id_salt(salt)
-            .selected_text(current.clone())
-            .show_ui(ui, |ui| {
-                for id in ids {
-                    ui.selectable_value(current, id.clone(), id);
-                }
-            });
-    });
 }

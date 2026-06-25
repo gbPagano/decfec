@@ -1,33 +1,25 @@
 // Rede sintética só para exercitar o modelo de topologia.
 // Duas subestações (SD_A, SD_B) ligadas por uma chave NA (tie) normalmente aberta.
-//
-//   SD_A --[dA]-- a1 --(500)-- a2 --[sa]-- a3 --(300)-- a4
-//                                                        |
-//                                                       [NA]  (aberta)
-//                                                        |
-//                       SD_B --[dB]-- b1 --(400)-- b2 ---+
+// Chaves são nós; ramos podem conectar mais de dois nós.
 //
 // Cc = 500 + 300 + 400 = 1200 consumidores.
 Network(
     buses: [
         (id: "SD_A", kind: Substation),
+        (id: "dA",   kind: Switch(normal: Closed)),
         (id: "a1",   kind: Junction),
+        (id: "sa",   kind: Switch(normal: Closed)),
         (id: "a2",   kind: Junction),
-        (id: "a3",   kind: Junction),
-        (id: "a4",   kind: Junction),
+        (id: "NA",   kind: Switch(normal: Open)),
         (id: "SD_B", kind: Substation),
+        (id: "dB",   kind: Switch(normal: Closed)),
         (id: "b1",   kind: Junction),
-        (id: "b2",   kind: Junction),
     ],
     branches: [
-        (id: Some("dA"), from: "SD_A", to: "a1", element: Switch(normal: Closed)),
-        (from: "a1", to: "a2", element: Line(consumers: 500)),
-        (id: Some("sa"), from: "a2", to: "a3", element: Switch(normal: Closed)),
-        (from: "a3", to: "a4", element: Line(consumers: 300)),
-
-        (id: Some("dB"), from: "SD_B", to: "b1", element: Switch(normal: Closed)),
-        (from: "b1", to: "b2", element: Line(consumers: 400)),
-
-        (id: Some("NA"), from: "a4", to: "b2", element: Switch(normal: Open)),
+        (id: Some("feed_a"), nodes: ["SD_A", "dA"], element: Line(consumers: 0)),
+        (id: Some("A"),      nodes: ["dA", "a1", "sa"], element: Line(consumers: 500)),
+        (id: Some("B"),      nodes: ["sa", "a2", "NA"], element: Line(consumers: 300)),
+        (id: Some("feed_b"), nodes: ["SD_B", "dB"], element: Line(consumers: 0)),
+        (id: Some("C"),      nodes: ["dB", "b1", "NA"], element: Line(consumers: 400)),
     ],
 )

@@ -14,18 +14,18 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::topology::{Element, Network, State};
+use crate::topology::{BusKind, Network, State};
 
 /// Limiar do PRODIST: interrupções com duração **< 3 min** são momentâneas e
 /// não entram nos indicadores.
 pub const MOMENTARY_LIMIT_MIN: f64 = 3.0;
 
-/// O que um evento faz com um ramo.
+/// O que um evento faz.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Action {
-    /// O ramo entra em curto: deixa de conduzir até o reparo.
+    /// Um ramo entra em curto: deixa de servir consumidores até o reparo.
     Fault,
-    /// O ramo (antes em falta) volta a conduzir.
+    /// O ramo antes em falta volta a servir.
     Repair,
     /// A chave abre.
     Open,
@@ -33,7 +33,10 @@ pub enum Action {
     Close,
 }
 
-/// Um evento na linha do tempo: em `at_min`, aplica `action` ao ramo `branch`.
+/// Um evento na linha do tempo: em `at_min`, aplica `action` ao alvo em
+/// `branch`. Para `Fault`/`Repair`, o alvo é um ramo; para `Open`/`Close`, uma
+/// chave modelada como nó. O nome do campo permanece `branch` para manter o RON
+/// curto nos cenários existentes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
     pub at_min: f64,
@@ -48,7 +51,7 @@ pub struct Scenario {
 }
 
 /// Resultado da simulação: por índice de ramo-linha, as durações (min) de cada
-/// interrupção sofrida (ainda **sem** o filtro dos 3 min — ele é aplicado no
+/// interrupção sofrida (ainda **sem** o filtro dos 3 min - ele é aplicado no
 /// cálculo dos indicadores).
 #[derive(Debug, Clone, Default)]
 pub struct SimResult {
@@ -75,7 +78,7 @@ impl SimResult {
                 fec: 0.0,
             };
         }
-        let mut dec_num = 0.0; // consumidor·min
+        let mut dec_num = 0.0; // consumidor.min
         let mut fec_num = 0.0; // consumidor
         for &i in conjunto {
             let consumers = net.branches[i].consumers() as f64;
@@ -98,12 +101,14 @@ impl SimResult {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SimError {
     UnknownBranch(String),
+    UnknownSwitch(String),
 }
 
 impl fmt::Display for SimError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SimError::UnknownBranch(id) => write!(f, "evento referencia ramo inexistente: '{id}'"),
+            SimError::UnknownSwitch(id) => write!(f, "evento referencia chave inexistente: '{id}'"),
         }
     }
 }
@@ -123,16 +128,17 @@ impl Scenario {
     /// Sequências contíguas sem energia viram **uma** interrupção. O roteiro
     /// deve terminar com tudo restaurado (faltas reparadas).
     pub fn simulate(&self, net: &Network) -> Result<SimResult, SimError> {
-        let n = net.branches.len();
+        let branch_count = net.branches.len();
+        let bus_count = net.buses.len();
 
         // Estado inicial (config normal): NA aberta, NF fechada; nada em falta.
-        let mut is_open = vec![false; n];
-        for (i, b) in net.branches.iter().enumerate() {
-            if let Element::Switch { normal } = b.element {
+        let mut is_open = vec![false; bus_count];
+        for (i, b) in net.buses.iter().enumerate() {
+            if let BusKind::Switch { normal } = b.kind {
                 is_open[i] = normal == State::Open;
             }
         }
-        let mut is_failed = vec![false; n];
+        let mut is_failed = vec![false; branch_count];
 
         // Instantes de evento, ordenados e únicos.
         let mut times: Vec<f64> = self.events.iter().map(|e| e.at_min).collect();
@@ -153,25 +159,39 @@ impl Scenario {
         for &t in &times[..times.len() - 1] {
             // Aplica todos os eventos deste instante (antes da fase k).
             for e in self.events.iter().filter(|e| e.at_min == t) {
-                let idx = net
-                    .branch_index(&e.branch)
-                    .ok_or_else(|| SimError::UnknownBranch(e.branch.clone()))?;
                 match e.action {
-                    Action::Fault => is_failed[idx] = true,
-                    Action::Repair => is_failed[idx] = false,
-                    Action::Open => is_open[idx] = true,
-                    Action::Close => is_open[idx] = false,
+                    Action::Fault => {
+                        let idx = net
+                            .branch_index(&e.branch)
+                            .ok_or_else(|| SimError::UnknownBranch(e.branch.clone()))?;
+                        is_failed[idx] = true;
+                    }
+                    Action::Repair => {
+                        let idx = net
+                            .branch_index(&e.branch)
+                            .ok_or_else(|| SimError::UnknownBranch(e.branch.clone()))?;
+                        is_failed[idx] = false;
+                    }
+                    Action::Open => {
+                        let idx = net
+                            .switch_index(&e.branch)
+                            .ok_or_else(|| SimError::UnknownSwitch(e.branch.clone()))?;
+                        is_open[idx] = true;
+                    }
+                    Action::Close => {
+                        let idx = net
+                            .switch_index(&e.branch)
+                            .ok_or_else(|| SimError::UnknownSwitch(e.branch.clone()))?;
+                        is_open[idx] = false;
+                    }
                 }
             }
 
-            // Energização nesta fase: um ramo conduz se não está em falta e não
-            // está aberto. Um bloco é servido se sua linha não está em falta e
-            // tem ao menos um extremo energizado.
-            let energ = net.energized(|i, _b| !is_failed[i] && !is_open[i]);
+            // Energização nesta fase: um ramo conduz se não está em falta, e um
+            // nó conduz se não é uma chave aberta.
+            let energ = net.energized(|i, _| !is_failed[i], |i, _| !is_open[i]);
             for &li in &lines {
-                let b = &net.branches[li];
-                let served = !is_failed[li]
-                    && (energ.contains(b.from.as_str()) || energ.contains(b.to.as_str()));
+                let served = !is_failed[li] && net.line_served(li, &energ);
                 out_phase.get_mut(&li).unwrap().push(!served);
             }
         }
@@ -204,28 +224,24 @@ impl Scenario {
 mod tests {
     use super::*;
 
-    // Alimentador radial: S --[br]-- n0 --(A:100)-- n1 --[sw_mid]-- n2
-    //                       --(B:200)-- n3 --[sw_end]-- n4 --(C:300)-- n5 --[NA]-- S2
+    // Alimentador radial: S -- br -- A(100) -- sw_mid -- B(200) -- sw_end
+    // -- C(300) -- NA -- S2. Chaves são nós; consumidores ficam nos ramos.
     const NET: &str = r#"
         Network(
             buses: [
-                (id: "S",  kind: Substation),
-                (id: "n0", kind: Junction),
-                (id: "n1", kind: Junction),
-                (id: "n2", kind: Junction),
-                (id: "n3", kind: Junction),
-                (id: "n4", kind: Junction),
-                (id: "n5", kind: Junction),
-                (id: "S2", kind: Substation),
+                (id: "S",      kind: Substation),
+                (id: "br",     kind: Switch(normal: Closed)),
+                (id: "sw_mid", kind: Switch(normal: Closed)),
+                (id: "sw_end", kind: Switch(normal: Closed)),
+                (id: "NA",     kind: Switch(normal: Open)),
+                (id: "S2",     kind: Substation),
             ],
             branches: [
-                (id: Some("br"),     from: "S",  to: "n0", element: Switch(normal: Closed)),
-                (id: Some("A"),      from: "n0", to: "n1", element: Line(consumers: 100)),
-                (id: Some("sw_mid"), from: "n1", to: "n2", element: Switch(normal: Closed)),
-                (id: Some("B"),      from: "n2", to: "n3", element: Line(consumers: 200)),
-                (id: Some("sw_end"), from: "n3", to: "n4", element: Switch(normal: Closed)),
-                (id: Some("C"),      from: "n4", to: "n5", element: Line(consumers: 300)),
-                (id: Some("NA"),     from: "n5", to: "S2", element: Switch(normal: Open)),
+                (id: Some("feed"), nodes: ["S", "br"], element: Line(consumers: 0)),
+                (id: Some("A"),    nodes: ["br", "sw_mid"], element: Line(consumers: 100)),
+                (id: Some("B"),    nodes: ["sw_mid", "sw_end"], element: Line(consumers: 200)),
+                (id: Some("C"),    nodes: ["sw_end", "NA"], element: Line(consumers: 300)),
+                (id: Some("tie"),  nodes: ["NA", "S2"], element: Line(consumers: 0)),
             ],
         )
     "#;
@@ -264,9 +280,9 @@ mod tests {
                 .get(&net.branch_index(id).unwrap())
                 .cloned()
         };
-        assert_eq!(dur("A"), Some(vec![2.0])); // montante: 0→2 min
-        assert_eq!(dur("B"), Some(vec![120.0])); // faltado: 0→reparo
-        assert_eq!(dur("C"), Some(vec![30.0])); // transferido: 0→30 min
+        assert_eq!(dur("A"), Some(vec![2.0])); // montante: 0->2 min
+        assert_eq!(dur("B"), Some(vec![120.0])); // faltado: 0->reparo
+        assert_eq!(dur("C"), Some(vec![30.0])); // transferido: 0->30 min
     }
 
     #[test]
@@ -288,6 +304,50 @@ mod tests {
         let ind = res.indicators(&net, &conjunto);
         assert!((ind.dec_h - 300.0 * 30.0 / 60.0 / 300.0).abs() < 1e-9); // 0,5 h
         assert!((ind.fec - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn open_switch_can_deenergize_multiterminal_branch_until_tie_closes() {
+        const NET: &str = r#"
+            Network(
+                buses: [
+                    (id: "S",   kind: Substation),
+                    (id: "3",   kind: Switch(normal: Closed)),
+                    (id: "4",   kind: Switch(normal: Closed)),
+                    (id: "5",   kind: Switch(normal: Closed)),
+                    (id: "NA1", kind: Switch(normal: Open)),
+                    (id: "S2",  kind: Substation),
+                ],
+                branches: [
+                    (id: Some("feed"), nodes: ["S", "3"], element: Line(consumers: 0)),
+                    (id: Some("bloco_700"), nodes: ["3", "4", "5", "NA1"], element: Line(consumers: 700)),
+                    (id: Some("tie"), nodes: ["NA1", "S2"], element: Line(consumers: 0)),
+                ],
+            )
+        "#;
+        let net = Network::from_ron(NET).unwrap();
+        net.validate().unwrap();
+        let scenario = Scenario {
+            events: vec![
+                Event {
+                    at_min: 0.0,
+                    branch: "3".into(),
+                    action: Action::Open,
+                },
+                Event {
+                    at_min: 20.0,
+                    branch: "NA1".into(),
+                    action: Action::Close,
+                },
+            ],
+        };
+        let res = scenario.simulate(&net).unwrap();
+        assert_eq!(
+            res.interruptions
+                .get(&net.branch_index("bloco_700").unwrap())
+                .cloned(),
+            Some(vec![20.0])
+        );
     }
 
     #[test]
