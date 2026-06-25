@@ -1,66 +1,259 @@
-// Rede do exercício de referência (references/ex-decfec.jpg).
-// ====== PARCIAL: apenas o alimentador SD1 ======
-// Chaves de manobra são nós (`kind: Switch`). Ramos podem ter mais de dois
-// terminais, evitando barras artificiais como `c4u/c4/c5u/c5`.
-// As pontas das NAs (xxx_far) são stubs até ligarmos SD2/SD3.
-//
-// Checksums esperados do gabarito (item a):
-//   Cc(SD1) = downstream("1") = 5400
-//   afetado por F2 = downstream("3") = 4500
-//   downstream("6") = 1700
-Network(
+(
     buses: [
-        (id: "SD1", kind: Substation),
-        (id: "1",   kind: Switch(normal: Closed)),
-        (id: "3",   kind: Switch(normal: Closed)),
-        (id: "4",   kind: Switch(normal: Closed)),
-        (id: "5",   kind: Switch(normal: Closed)),
-        (id: "NA3", kind: Switch(normal: Open)),
-        (id: "na3_far", kind: Junction),
-        (id: "NA2", kind: Switch(normal: Open)),
-        (id: "na2_far", kind: Substation),  // TEMP: stand-in de SD3 até encodarmos o feeder
-
-        (id: "6",   kind: Switch(normal: Closed)),
-        (id: "c7",  kind: Junction),
-        (id: "c8",  kind: Junction),
-        (id: "c9",  kind: Junction),
-        (id: "NA6", kind: Switch(normal: Open)),
-        (id: "na6_far", kind: Substation),  // TEMP: stand-in de SD2 até encodarmos o feeder
-
-        (id: "10",  kind: Switch(normal: Closed)),
-        (id: "c10b",kind: Junction),
-        (id: "c11", kind: Junction),
-        (id: "NA7", kind: Switch(normal: Open)),
-        (id: "na7_far", kind: Junction),
+        (
+            id: "sd1",
+            kind: Substation,
+        ),
+        (
+            id: "2",
+            kind: Switch(
+                normal: Closed,
+            ),
+        ),
+        (
+            id: "3",
+            kind: Switch(
+                normal: Closed,
+            ),
+        ),
+        (
+            id: "4",
+            kind: Switch(
+                normal: Closed,
+            ),
+        ),
+        (
+            id: "5",
+            kind: Switch(
+                normal: Closed,
+            ),
+        ),
+        (
+            id: "NA1",
+            kind: Switch(
+                normal: Open,
+            ),
+        ),
+        (
+            id: "6",
+            kind: Switch(
+                normal: Closed,
+            ),
+        ),
+        (
+            id: "10",
+            kind: Switch(
+                normal: Closed,
+            ),
+        ),
+        (
+            id: "NA2",
+            kind: Switch(
+                normal: Open,
+            ),
+        ),
+        (
+            id: "J1",
+            kind: Junction,
+        ),
+        (
+            id: "j2",
+            kind: Junction,
+        ),
+        (
+            id: "9",
+            kind: Switch(
+                normal: Closed,
+            ),
+        ),
+        (
+            id: "11",
+            kind: Switch(
+                normal: Closed,
+            ),
+        ),
+        (
+            id: "NA4",
+            kind: Switch(
+                normal: Open,
+            ),
+        ),
+        (
+            id: "na6",
+            kind: Switch(
+                normal: Open,
+            ),
+        ),
+        (
+            id: "sd2",
+            kind: Substation,
+        ),
+        (
+            id: "f1",
+            kind: Junction,
+        ),
+        (
+            id: "f2",
+            kind: Junction,
+        ),
+        (
+            id: "sd3",
+            kind: Substation,
+        ),
     ],
     branches: [
-        // tronco SD1 -> chave 4
-        (id: Some("feed_1"), nodes: ["SD1", "1"], element: Line(consumers: 0)),
-        (id: Some("l_900"),  nodes: ["1", "3"], element: Line(consumers: 900)),
-        (id: Some("tr_3_4"), nodes: ["3", "4"], element: Line(consumers: 0)),   // F2
-
-        // bloco multi-terminal do entorno 3/4/5/NA2 (700 consumidores)
-        (id: Some("l_700"),  nodes: ["3", "4", "5", "NA2"], element: Line(consumers: 700)),
-        (id: Some("l_400d"), nodes: ["5", "NA3"], element: Line(consumers: 400)),
-        (id: Some("tie_NA3"), nodes: ["NA3", "na3_far"], element: Line(consumers: 0)),
-
-        // ramo ascendente: chave 4 -> tap NA2 -> chave 6
-        (id: Some("l_600t"), nodes: ["4", "NA2"], element: Line(consumers: 600)),
-        (id: Some("tie_NA2"), nodes: ["NA2", "na2_far"], element: Line(consumers: 0)),
-        (id: Some("l_46b"),  nodes: ["4", "6"], element: Line(consumers: 0)),
-
-        // chave 6 -> esquerda (7-8-9 -> NA6)
-        (id: Some("tr_6_7"), nodes: ["6", "c7"], element: Line(consumers: 600)),  // F1
-        (id: Some("l_300a"), nodes: ["c7", "c8"], element: Line(consumers: 300)),
-        (id: Some("l_500a"), nodes: ["c8", "c9"], element: Line(consumers: 500)),
-        (id: Some("l_300b"), nodes: ["c9", "NA6"], element: Line(consumers: 300)),
-        (id: Some("tie_NA6"), nodes: ["NA6", "na6_far"], element: Line(consumers: 0)),
-
-        // ramo 10-11 -> NA7: pendura na chave 4. chave 10 isola o ramo.
-        (id: Some("l_4_10"), nodes: ["4", "10"], element: Line(consumers: 0)),
-        (id: Some("l_400r"), nodes: ["10", "c10b"], element: Line(consumers: 400)),
-        (id: Some("l_500r"), nodes: ["c10b", "c11"], element: Line(consumers: 500)),
-        (id: Some("l_200"),  nodes: ["c11", "NA7"], element: Line(consumers: 200)),
-        (id: Some("tie_NA7"), nodes: ["NA7", "na7_far"], element: Line(consumers: 0)),
+        (
+            id: Some("ramo1"),
+            nodes: [
+                "sd1",
+                "2",
+            ],
+            element: Line(
+                consumers: 0,
+            ),
+        ),
+        (
+            id: Some("ramo2"),
+            nodes: [
+                "3",
+                "2",
+            ],
+            element: Line(
+                consumers: 900,
+            ),
+        ),
+        (
+            id: Some("ramo3"),
+            nodes: [
+                "f2",
+                "5",
+                "4",
+                "NA1",
+            ],
+            element: Line(
+                consumers: 700,
+            ),
+        ),
+        (
+            id: Some("ramo5"),
+            nodes: [
+                "J1",
+                "4",
+            ],
+            element: Line(
+                consumers: 0,
+            ),
+        ),
+        (
+            id: Some("ramo6"),
+            nodes: [
+                "J1",
+                "NA2",
+            ],
+            element: Line(
+                consumers: 0,
+            ),
+        ),
+        (
+            id: Some("ramo4"),
+            nodes: [
+                "j2",
+                "J1",
+            ],
+            element: Line(
+                consumers: 600,
+            ),
+        ),
+        (
+            id: Some("ramo7"),
+            nodes: [
+                "6",
+                "j2",
+                "10",
+            ],
+            element: Line(
+                consumers: 400,
+            ),
+        ),
+        (
+            id: Some("ramo8"),
+            nodes: [
+                "9",
+                "f1",
+            ],
+            element: Line(
+                consumers: 1400,
+            ),
+        ),
+        (
+            id: Some("ramo9"),
+            nodes: [
+                "11",
+                "10",
+            ],
+            element: Line(
+                consumers: 700,
+            ),
+        ),
+        (
+            id: Some("ramo10"),
+            nodes: [
+                "NA4",
+                "5",
+            ],
+            element: Line(
+                consumers: 400,
+            ),
+        ),
+        (
+            id: Some("ramo11"),
+            nodes: [
+                "na6",
+                "9",
+            ],
+            element: Line(
+                consumers: 300,
+            ),
+        ),
+        (
+            id: Some("ramo12"),
+            nodes: [
+                "sd2",
+                "na6",
+            ],
+            element: Line(
+                consumers: 0,
+            ),
+        ),
+        (
+            id: Some("ramo13"),
+            nodes: [
+                "f1",
+                "6",
+            ],
+            element: Line(
+                consumers: 0,
+            ),
+        ),
+        (
+            id: Some("ramo14"),
+            nodes: [
+                "3",
+                "f2",
+            ],
+            element: Line(
+                consumers: 0,
+            ),
+        ),
+        (
+            id: Some("ramo15"),
+            nodes: [
+                "NA2",
+                "sd3",
+            ],
+            element: Line(
+                consumers: 0,
+            ),
+        ),
     ],
 )

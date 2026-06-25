@@ -1,34 +1,64 @@
-// Item (a): faltas F1 e F2 no alimentador SD1.
-// Reproduz o gabarito: DEC(chave 1) ≈ 2,33 h, FEC ≈ 1,15.
-// Rode com:  cargo run -- networks/exercicio.ron dec-fec scenarios/item_a.ron 1
-Scenario(
+(
     events: [
-        // ---- F2 no trecho 3-4 (reparo em 276 min) ----
-        (at_min: 0.0,   branch: "tr_3_4", action: Fault),
-        (at_min: 0.0,   branch: "1",      action: Open),   // disjuntor derruba o alimentador
-        // isola a falta, separa 6 e 10, religa o montante (bloco 900)
-        (at_min: 2.0,   branch: "3",      action: Open),
-        (at_min: 2.0,   branch: "4",      action: Open),
-        (at_min: 2.0,   branch: "6",      action: Open),
-        (at_min: 2.0,   branch: "10",     action: Open),
-        (at_min: 2.0,   branch: "1",      action: Close),
-        (at_min: 40.0,  branch: "NA6",    action: Close),  // jusante de 6 (1700) -> SD2
-        (at_min: 65.0,  branch: "NA2",    action: Close),  // ramo da chave 5 + tap (1700) -> SD3
-        // reparo e volta ao normal (10-11 = 1100 só volta aqui)
-        (at_min: 276.0, branch: "tr_3_4", action: Repair),
-        (at_min: 276.0, branch: "3",      action: Close),
-        (at_min: 276.0, branch: "4",      action: Close),
-        (at_min: 276.0, branch: "6",      action: Close),
-        (at_min: 276.0, branch: "10",     action: Close),
-        (at_min: 276.0, branch: "NA6",    action: Open),
-        (at_min: 276.0, branch: "NA2",    action: Open),
-
-        // ---- F1 no trecho 6-7 (160 min, sem transferência) ----
-        (at_min: 300.0, branch: "tr_6_7", action: Fault),
-        (at_min: 300.0, branch: "1",      action: Open),
-        (at_min: 302.0, branch: "6",      action: Open),   // isola a esquerda; religa o resto
-        (at_min: 302.0, branch: "1",      action: Close),
-        (at_min: 460.0, branch: "tr_6_7", action: Repair),
-        (at_min: 460.0, branch: "6",      action: Close),
+        (
+            at_min: 0.0,
+            bus: "f2",
+            action: Fault,
+        ),
+        (
+            at_min: 40.0,
+            bus: "6",
+            action: Open,
+        ),
+        (
+            at_min: 40.0,
+            bus: "na6",
+            action: Close,
+        ),
+        (
+            at_min: 65.0,
+            bus: "4",
+            action: Open,
+        ),
+        (
+            at_min: 65.0,
+            bus: "NA2",
+            action: Close,
+        ),
+        (
+            at_min: 276.0,
+            bus: "f2",
+            action: Repair,
+        ),
+        (
+            at_min: 276.0,
+            bus: "6",
+            action: Close,
+        ),
+        (
+            at_min: 276.0,
+            bus: "4",
+            action: Close,
+        ),
+        (
+            at_min: 277.0,
+            bus: "na6",
+            action: Open,
+        ),
+        (
+            at_min: 277.0,
+            bus: "NA2",
+            action: Open,
+        ),
+        (
+            at_min: 400.0,
+            bus: "f1",
+            action: Fault,
+        ),
+        (
+            at_min: 560.0,
+            bus: "f1",
+            action: Repair,
+        ),
     ],
 )

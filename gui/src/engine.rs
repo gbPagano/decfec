@@ -71,15 +71,15 @@ mod tests {
     use super::*;
 
     // Prova que a UI está fiada corretamente ao domínio: a rede e o cenário de
-    // referência embutidos devem reproduzir o gabarito do item (a).
+    // referência embutidos devem simular eventos sobre barras.
     const REDE: &str = include_str!("../../networks/ref-exercise.ron");
     const CENARIO: &str = include_str!("../../scenarios/item_a.ron");
 
     #[test]
-    fn item_a_bate_gabarito() {
+    fn cenario_embutido_roda() {
         let net = load_network(REDE).expect("rede de referência deve carregar");
         let scenario = load_scenario(CENARIO).expect("cenário de referência deve carregar");
-        let r = run(&net, &scenario, Some("1")).expect("simulação deve rodar");
+        let r = run(&net, &scenario, Some("2")).expect("simulação deve rodar");
         assert_eq!(r.cc, 5400, "Cc do alimentador SD1");
         assert!((r.ind.dec_h - 2.33).abs() < 0.01, "DEC = {}", r.ind.dec_h);
         assert!((r.ind.fec - 1.15).abs() < 0.01, "FEC = {}", r.ind.fec);
@@ -95,7 +95,7 @@ mod tests {
         let scenario = load_scenario(CENARIO).unwrap();
         let scenario2 =
             load_scenario(&scenario_to_ron(&scenario)).expect("cenário exportado deve recarregar");
-        let r = run(&net2, &scenario2, Some("1")).unwrap();
+        let r = run(&net2, &scenario2, Some("2")).unwrap();
         assert_eq!(r.cc, 5400);
         assert!((r.ind.dec_h - 2.33).abs() < 0.01);
     }

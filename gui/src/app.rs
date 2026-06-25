@@ -40,6 +40,8 @@ pub struct App {
     report: Option<Result<Report, String>>,
     /// Texto em edição para os terminais do ramo selecionado.
     branch_nodes_editor: Option<(usize, String)>,
+    /// Texto em edição para o id da barra selecionada.
+    bus_id_editor: Option<(String, String)>,
 }
 
 impl App {
@@ -50,13 +52,14 @@ impl App {
             scenario_ron: CENARIO_PADRAO.to_string(),
             scenario: engine::load_scenario(CENARIO_PADRAO)
                 .unwrap_or_else(|_| Scenario { events: Vec::new() }),
-            switch: "1".to_string(),
+            switch: "2".to_string(),
             net: None,
             positions: HashMap::new(),
             canvas: CanvasState::default(),
             net_status: Ok(String::new()),
             report: None,
             branch_nodes_editor: None,
+            bus_id_editor: None,
         };
         app.load_network();
         app
@@ -86,6 +89,7 @@ impl App {
         self.canvas.selection = None;
         self.report = None;
         self.branch_nodes_editor = None;
+        self.bus_id_editor = None;
     }
 
     /// Roda a simulação com a rede carregada e o cenário/chave atuais.
@@ -140,6 +144,9 @@ impl App {
             if ui.button("Recarregar do RON").clicked() {
                 self.load_network();
             }
+            if ui.button("Novo vazio").clicked() {
+                self.reset_empty_network();
+            }
         });
         match &self.net_status {
             Ok(resumo) if !resumo.is_empty() => {
@@ -180,6 +187,22 @@ impl App {
             });
     }
 
+    fn reset_empty_network(&mut self) {
+        let net = Network {
+            buses: Vec::new(),
+            branches: Vec::new(),
+        };
+        self.net_ron = engine::network_to_ron(&net);
+        self.net = Some(net);
+        self.positions.clear();
+        self.canvas.request_fit();
+        self.canvas.selection = None;
+        self.branch_nodes_editor = None;
+        self.bus_id_editor = None;
+        self.report = None;
+        self.net_status = Ok("canvas vazio".to_string());
+    }
+
     /// Editor da entidade selecionada no canvas (barra ou ramo).
     ///
     /// Edita a rede em memória diretamente (que passa a ser a fonte da verdade
@@ -196,10 +219,67 @@ impl App {
         match sel {
             Selection::Bus(id) => {
                 self.branch_nodes_editor = None;
-                let Some(bus) = net.buses.iter_mut().find(|b| b.id == id) else {
+                if self
+                    .bus_id_editor
+                    .as_ref()
+                    .is_none_or(|(selected, _)| selected != &id)
+                {
+                    self.bus_id_editor = Some((id.clone(), id.clone()));
+                }
+
+                let Some(bus_idx) = net.buses.iter().position(|b| b.id == id) else {
                     return;
                 };
-                ui.label(format!("Barramento: {}", bus.id));
+                ui.label("Barramento");
+
+                let id_buf = &mut self
+                    .bus_id_editor
+                    .as_mut()
+                    .expect("editor inicializado acima")
+                    .1;
+                let mut rename_to = None;
+                if ui
+                    .horizontal(|ui| {
+                        ui.label("id:");
+                        ui.text_edit_singleline(id_buf)
+                    })
+                    .inner
+                    .changed()
+                {
+                    let new_id = id_buf.trim();
+                    if !new_id.is_empty() && new_id != id {
+                        rename_to = Some(new_id.to_string());
+                    }
+                }
+
+                if let Some(new_id) = rename_to {
+                    let old_id = id.clone();
+                    net.buses[bus_idx].id = new_id.clone();
+                    for branch in &mut net.branches {
+                        for node in &mut branch.nodes {
+                            if node == &old_id {
+                                *node = new_id.clone();
+                            }
+                        }
+                    }
+                    if let Some(pos) = self.positions.remove(&old_id) {
+                        self.positions.insert(new_id.clone(), pos);
+                    }
+                    if self.switch == old_id {
+                        self.switch = new_id.clone();
+                    }
+                    for event in &mut self.scenario.events {
+                        if event.bus == old_id {
+                            event.bus = new_id.clone();
+                        }
+                    }
+                    self.canvas.selection = Some(Selection::Bus(new_id.clone()));
+                    self.bus_id_editor = Some((new_id.clone(), new_id));
+                    self.report = None;
+                    return self.revalidate();
+                }
+
+                let bus = &mut net.buses[bus_idx];
                 ui.horizontal(|ui| {
                     ui.label("Tipo:");
                     if ui
@@ -233,6 +313,7 @@ impl App {
                 }
             }
             Selection::Branch(i) => {
+                self.bus_id_editor = None;
                 let Some(b) = net.branches.get_mut(i) else {
                     return;
                 };
@@ -382,6 +463,7 @@ impl App {
         });
         self.canvas.selection = Some(Selection::Branch(net.branches.len() - 1));
         self.branch_nodes_editor = None;
+        self.bus_id_editor = None;
         self.revalidate();
     }
 
@@ -406,6 +488,7 @@ impl App {
             }
         }
         self.branch_nodes_editor = None;
+        self.bus_id_editor = None;
         self.revalidate();
     }
 
@@ -418,14 +501,12 @@ impl App {
             .flat_map(|n| n.buses.iter().filter(|b| b.is_switch()))
             .map(|b| b.id.clone())
             .collect();
-        let branch_ids: Vec<String> = self
+        let bus_ids: Vec<String> = self
             .net
             .iter()
-            .flat_map(|n| n.branches.iter())
-            .filter_map(|b| b.id.clone())
+            .flat_map(|n| n.buses.iter())
+            .map(|b| b.id.clone())
             .collect();
-        let mut event_ids = branch_ids.clone();
-        event_ids.extend(switch_ids.iter().cloned());
 
         ui.add_space(4.0);
         ui.horizontal(|ui| {
@@ -456,7 +537,7 @@ impl App {
             if ui.button("+ adicionar").clicked() {
                 self.scenario.events.push(Event {
                     at_min: 0.0,
-                    branch: branch_ids.first().cloned().unwrap_or_default(),
+                    bus: bus_ids.first().cloned().unwrap_or_default(),
                     action: Action::Fault,
                 });
             }
@@ -483,12 +564,12 @@ impl App {
                                 .range(0.0..=f64::MAX)
                                 .speed(1.0),
                         );
-                        egui::ComboBox::from_id_salt(("ev_branch", i))
-                            .selected_text(ev.branch.clone())
+                        egui::ComboBox::from_id_salt(("ev_bus", i))
+                            .selected_text(ev.bus.clone())
                             .width(90.0)
                             .show_ui(ui, |ui| {
-                                for id in &event_ids {
-                                    ui.selectable_value(&mut ev.branch, id.clone(), id);
+                                for id in &bus_ids {
+                                    ui.selectable_value(&mut ev.bus, id.clone(), id);
                                 }
                             });
                         egui::ComboBox::from_id_salt(("ev_action", i))

@@ -20,12 +20,12 @@ use crate::topology::{BusKind, Network, State};
 /// não entram nos indicadores.
 pub const MOMENTARY_LIMIT_MIN: f64 = 3.0;
 
-/// O que um evento faz.
+/// O que um evento faz em uma barra.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Action {
-    /// Um ramo entra em curto: deixa de servir consumidores até o reparo.
+    /// A barra entra em curto: deixa de conduzir até o reparo.
     Fault,
-    /// O ramo antes em falta volta a servir.
+    /// A barra antes em falta volta a conduzir.
     Repair,
     /// A chave abre.
     Open,
@@ -33,14 +33,12 @@ pub enum Action {
     Close,
 }
 
-/// Um evento na linha do tempo: em `at_min`, aplica `action` ao alvo em
-/// `branch`. Para `Fault`/`Repair`, o alvo é um ramo; para `Open`/`Close`, uma
-/// chave modelada como nó. O nome do campo permanece `branch` para manter o RON
-/// curto nos cenários existentes.
+/// Um evento na linha do tempo: em `at_min`, aplica `action` à barra `bus`.
+/// `Fault`/`Repair` servem para qualquer barra; `Open`/`Close`, para chaves.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
     pub at_min: f64,
-    pub branch: String,
+    pub bus: String,
     pub action: Action,
 }
 
@@ -100,14 +98,14 @@ impl SimResult {
 /// Erros da simulação.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SimError {
-    UnknownBranch(String),
+    UnknownBus(String),
     UnknownSwitch(String),
 }
 
 impl fmt::Display for SimError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SimError::UnknownBranch(id) => write!(f, "evento referencia ramo inexistente: '{id}'"),
+            SimError::UnknownBus(id) => write!(f, "evento referencia barra inexistente: '{id}'"),
             SimError::UnknownSwitch(id) => write!(f, "evento referencia chave inexistente: '{id}'"),
         }
     }
@@ -128,7 +126,6 @@ impl Scenario {
     /// Sequências contíguas sem energia viram **uma** interrupção. O roteiro
     /// deve terminar com tudo restaurado (faltas reparadas).
     pub fn simulate(&self, net: &Network) -> Result<SimResult, SimError> {
-        let branch_count = net.branches.len();
         let bus_count = net.buses.len();
 
         // Estado inicial (config normal): NA aberta, NF fechada; nada em falta.
@@ -138,7 +135,7 @@ impl Scenario {
                 is_open[i] = normal == State::Open;
             }
         }
-        let mut is_failed = vec![false; branch_count];
+        let mut is_failed = vec![false; bus_count];
 
         // Instantes de evento, ordenados e únicos.
         let mut times: Vec<f64> = self.events.iter().map(|e| e.at_min).collect();
@@ -162,36 +159,36 @@ impl Scenario {
                 match e.action {
                     Action::Fault => {
                         let idx = net
-                            .branch_index(&e.branch)
-                            .ok_or_else(|| SimError::UnknownBranch(e.branch.clone()))?;
+                            .bus_index(&e.bus)
+                            .ok_or_else(|| SimError::UnknownBus(e.bus.clone()))?;
                         is_failed[idx] = true;
                     }
                     Action::Repair => {
                         let idx = net
-                            .branch_index(&e.branch)
-                            .ok_or_else(|| SimError::UnknownBranch(e.branch.clone()))?;
+                            .bus_index(&e.bus)
+                            .ok_or_else(|| SimError::UnknownBus(e.bus.clone()))?;
                         is_failed[idx] = false;
                     }
                     Action::Open => {
                         let idx = net
-                            .switch_index(&e.branch)
-                            .ok_or_else(|| SimError::UnknownSwitch(e.branch.clone()))?;
+                            .switch_index(&e.bus)
+                            .ok_or_else(|| SimError::UnknownSwitch(e.bus.clone()))?;
                         is_open[idx] = true;
                     }
                     Action::Close => {
                         let idx = net
-                            .switch_index(&e.branch)
-                            .ok_or_else(|| SimError::UnknownSwitch(e.branch.clone()))?;
+                            .switch_index(&e.bus)
+                            .ok_or_else(|| SimError::UnknownSwitch(e.bus.clone()))?;
                         is_open[idx] = false;
                     }
                 }
             }
 
-            // Energização nesta fase: um ramo conduz se não está em falta, e um
-            // nó conduz se não é uma chave aberta.
-            let energ = net.energized(|i, _| !is_failed[i], |i, _| !is_open[i]);
+            // Energização nesta fase: ramos sempre conduzem; uma barra conduz
+            // se não é uma chave aberta e não está em falta.
+            let energ = net.energized(|_, _| true, |i, _| !is_open[i] && !is_failed[i]);
             for &li in &lines {
-                let served = !is_failed[li] && net.line_served(li, &energ);
+                let served = net.line_served(li, &energ);
                 out_phase.get_mut(&li).unwrap().push(!served);
             }
         }
@@ -224,45 +221,47 @@ impl Scenario {
 mod tests {
     use super::*;
 
-    // Alimentador radial: S -- br -- A(100) -- sw_mid -- B(200) -- sw_end
-    // -- C(300) -- NA -- S2. Chaves são nós; consumidores ficam nos ramos.
+    // Alimentador radial: S -- br -- A(100) -- sw_mid -- B(200) -- F
+    // -- C(300) -- NA -- S2. F é o ponto de falta: normalmente conduz como
+    // uma junção; durante Fault, deixa de conduzir.
     const NET: &str = r#"
         Network(
             buses: [
                 (id: "S",      kind: Substation),
                 (id: "br",     kind: Switch(normal: Closed)),
                 (id: "sw_mid", kind: Switch(normal: Closed)),
-                (id: "sw_end", kind: Switch(normal: Closed)),
+                (id: "F",      kind: Junction),
                 (id: "NA",     kind: Switch(normal: Open)),
                 (id: "S2",     kind: Substation),
             ],
             branches: [
                 (id: Some("feed"), nodes: ["S", "br"], element: Line(consumers: 0)),
                 (id: Some("A"),    nodes: ["br", "sw_mid"], element: Line(consumers: 100)),
-                (id: Some("B"),    nodes: ["sw_mid", "sw_end"], element: Line(consumers: 200)),
-                (id: Some("C"),    nodes: ["sw_end", "NA"], element: Line(consumers: 300)),
+                (id: Some("B"),    nodes: ["sw_mid", "F"], element: Line(consumers: 200)),
+                (id: Some("C"),    nodes: ["F", "NA"], element: Line(consumers: 300)),
                 (id: Some("tie"),  nodes: ["NA", "S2"], element: Line(consumers: 0)),
             ],
         )
     "#;
 
-    // Falta em B: proteção (br) derruba tudo; em 2 min isola B e religa o
+    // Falta em F: proteção (br) derruba tudo; em 2 min isola F e religa o
     // montante (A); em 30 min transfere C pela NA; em 120 min repara B.
     fn scenario() -> Scenario {
-        let ev = |at_min: f64, branch: &str, action: Action| Event {
+        let ev = |at_min: f64, bus: &str, action: Action| Event {
             at_min,
-            branch: branch.into(),
+            bus: bus.into(),
             action,
         };
         Scenario {
             events: vec![
-                ev(0.0, "B", Action::Fault),
+                ev(0.0, "F", Action::Fault),
                 ev(0.0, "br", Action::Open),
                 ev(2.0, "sw_mid", Action::Open),
-                ev(2.0, "sw_end", Action::Open),
                 ev(2.0, "br", Action::Close),
                 ev(30.0, "NA", Action::Close),
-                ev(120.0, "B", Action::Repair),
+                ev(120.0, "F", Action::Repair),
+                ev(120.0, "sw_mid", Action::Close),
+                ev(121.0, "br", Action::Close),
             ],
         }
     }
@@ -300,9 +299,9 @@ mod tests {
     fn dec_fec_restricted_to_downstream_conjunto() {
         let net = net();
         let res = scenario().simulate(&net).unwrap();
-        let conjunto = net.downstream_lines("sw_end").unwrap(); // só o bloco C
+        let conjunto = net.downstream_lines("sw_mid").unwrap(); // blocos B e C
         let ind = res.indicators(&net, &conjunto);
-        assert!((ind.dec_h - 300.0 * 30.0 / 60.0 / 300.0).abs() < 1e-9); // 0,5 h
+        assert!((ind.dec_h - (200.0 * 120.0 + 300.0 * 30.0) / 60.0 / 500.0).abs() < 1e-9);
         assert!((ind.fec - 1.0).abs() < 1e-9);
     }
 
@@ -331,12 +330,12 @@ mod tests {
             events: vec![
                 Event {
                     at_min: 0.0,
-                    branch: "3".into(),
+                    bus: "3".into(),
                     action: Action::Open,
                 },
                 Event {
                     at_min: 20.0,
-                    branch: "NA1".into(),
+                    bus: "NA1".into(),
                     action: Action::Close,
                 },
             ],
@@ -351,25 +350,25 @@ mod tests {
     }
 
     #[test]
-    fn unknown_branch_is_error() {
+    fn unknown_bus_is_error() {
         let net = net();
         let bad = Scenario {
             events: vec![
                 Event {
                     at_min: 0.0,
-                    branch: "naoexiste".into(),
+                    bus: "naoexiste".into(),
                     action: Action::Fault,
                 },
                 Event {
                     at_min: 1.0,
-                    branch: "br".into(),
+                    bus: "br".into(),
                     action: Action::Open,
                 },
             ],
         };
         assert_eq!(
             bad.simulate(&net).unwrap_err(),
-            SimError::UnknownBranch("naoexiste".into())
+            SimError::UnknownBus("naoexiste".into())
         );
     }
 }
