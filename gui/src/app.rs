@@ -15,10 +15,13 @@ use crate::engine::{self, Report};
 const REDE_PADRAO: &str = include_str!("../../networks/ref-exercise.ron");
 const CENARIO_PADRAO: &str = include_str!("../../scenarios/item_a.ron");
 const CANVAS_POSITIONS_KEY: &str = "decfec.canvas.positions.v1";
+const HIDDEN_BUS_LABELS_KEY: &str = "decfec.canvas.hidden_bus_labels.v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SavedCanvasPositions {
     positions: Vec<SavedNodePosition>,
+    #[serde(default)]
+    hidden_bus_labels: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,6 +29,11 @@ struct SavedNodePosition {
     id: String,
     x: f32,
     y: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SavedHiddenBusLabels {
+    ids: Vec<String>,
 }
 
 /// Aplicação egui.
@@ -62,6 +70,8 @@ pub struct App {
     bus_id_editor: Option<(String, String)>,
     /// Labels de barramentos ocultos no canvas (estado visual da GUI).
     hidden_bus_labels: HashSet<String>,
+    /// Se `true`, grava `hidden_bus_labels` no storage no fim do frame atual.
+    hidden_bus_labels_dirty: bool,
 }
 
 impl App {
@@ -83,10 +93,12 @@ impl App {
             branch_nodes_editor: None,
             bus_id_editor: None,
             hidden_bus_labels: HashSet::new(),
+            hidden_bus_labels_dirty: false,
         };
         app.load_network();
         if let Some(storage) = cc.storage {
             app.restore_canvas_positions(storage);
+            app.restore_hidden_bus_labels(storage);
         }
         app
     }
@@ -116,7 +128,7 @@ impl App {
         self.report = None;
         self.branch_nodes_editor = None;
         self.bus_id_editor = None;
-        self.hidden_bus_labels.clear();
+        self.retain_hidden_labels_for_loaded_network();
     }
 
     /// Roda a simulação com a rede carregada e o cenário/chave atuais.
@@ -153,11 +165,76 @@ impl App {
                 entry.insert(Pos2::new(p.x, p.y));
             }
         }
+        self.apply_hidden_bus_labels(saved.hidden_bus_labels);
     }
 
     fn save_canvas_positions(&self, storage: &mut dyn eframe::Storage) {
         if let Ok(text) = self.canvas_positions_to_ron() {
             storage.set_string(CANVAS_POSITIONS_KEY, text);
+        }
+    }
+
+    fn restore_hidden_bus_labels(&mut self, storage: &dyn eframe::Storage) {
+        let Some(saved) = storage.get_string(HIDDEN_BUS_LABELS_KEY) else {
+            return;
+        };
+        let Ok(saved) = ron::from_str::<SavedHiddenBusLabels>(&saved) else {
+            return;
+        };
+
+        self.hidden_bus_labels = saved.ids.into_iter().collect();
+        self.retain_hidden_labels_for_loaded_network();
+        self.hidden_bus_labels_dirty = false;
+    }
+
+    fn save_hidden_bus_labels(&self, storage: &mut dyn eframe::Storage) {
+        let mut ids: Vec<String> = self.hidden_bus_labels.iter().cloned().collect();
+        ids.sort();
+        let cfg = ron::ser::PrettyConfig::default();
+        if let Ok(text) = ron::ser::to_string_pretty(&SavedHiddenBusLabels { ids }, cfg) {
+            storage.set_string(HIDDEN_BUS_LABELS_KEY, text);
+        }
+    }
+
+    fn flush_hidden_bus_labels(&mut self, frame: &mut eframe::Frame) {
+        if !self.hidden_bus_labels_dirty {
+            return;
+        }
+        if let Some(storage) = frame.storage_mut() {
+            self.save_hidden_bus_labels(storage);
+            self.hidden_bus_labels_dirty = false;
+        }
+    }
+
+    fn retain_hidden_labels_for_loaded_network(&mut self) {
+        let Some(net) = &self.net else {
+            return;
+        };
+        let before = self.hidden_bus_labels.len();
+        self.hidden_bus_labels
+            .retain(|id| net.buses.iter().any(|bus| bus.id == *id));
+        if self.hidden_bus_labels.len() != before {
+            self.hidden_bus_labels_dirty = true;
+        }
+    }
+
+    fn mark_hidden_bus_labels_dirty(&mut self) {
+        self.hidden_bus_labels_dirty = true;
+    }
+
+    fn apply_hidden_bus_labels(&mut self, ids: Vec<String>) {
+        let Some(net) = &self.net else {
+            self.hidden_bus_labels.clear();
+            self.hidden_bus_labels_dirty = true;
+            return;
+        };
+        let next: HashSet<String> = ids
+            .into_iter()
+            .filter(|id| net.buses.iter().any(|bus| bus.id == *id))
+            .collect();
+        if self.hidden_bus_labels != next {
+            self.hidden_bus_labels = next;
+            self.hidden_bus_labels_dirty = true;
         }
     }
 
@@ -174,7 +251,16 @@ impl App {
         positions.sort_by(|a, b| a.id.cmp(&b.id));
 
         let cfg = ron::ser::PrettyConfig::default();
-        ron::ser::to_string_pretty(&SavedCanvasPositions { positions }, cfg)
+        let mut hidden_bus_labels: Vec<String> = self.hidden_bus_labels.iter().cloned().collect();
+        hidden_bus_labels.sort();
+
+        ron::ser::to_string_pretty(
+            &SavedCanvasPositions {
+                positions,
+                hidden_bus_labels,
+            },
+            cfg,
+        )
     }
 
     fn export_canvas_layout(&mut self) {
@@ -206,13 +292,14 @@ impl App {
                 applied += 1;
             }
         }
+        self.apply_hidden_bus_labels(saved.hidden_bus_labels);
         self.canvas.request_fit();
         self.layout_status = Some(Ok(format!("{applied} posições aplicadas")));
     }
 }
 
 impl eframe::App for App {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         egui::Panel::top("titulo").show_inside(ui, |ui| {
             ui.add_space(4.0);
             ui.heading("decfec — editor de redes e falhas");
@@ -230,10 +317,13 @@ impl eframe::App for App {
             .show_inside(ui, |ui| self.painel_cenario(ui));
 
         egui::CentralPanel::default().show_inside(ui, |ui| self.painel_canvas(ui));
+
+        self.flush_hidden_bus_labels(frame);
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         self.save_canvas_positions(storage);
+        self.save_hidden_bus_labels(storage);
     }
 }
 
@@ -331,7 +421,10 @@ impl App {
         self.canvas.clear_selection();
         self.branch_nodes_editor = None;
         self.bus_id_editor = None;
-        self.hidden_bus_labels.clear();
+        if !self.hidden_bus_labels.is_empty() {
+            self.hidden_bus_labels.clear();
+            self.mark_hidden_bus_labels_dirty();
+        }
         self.report = None;
         self.net_status = Ok("canvas vazio".to_string());
     }
@@ -406,6 +499,7 @@ impl App {
                     }
                     if self.hidden_bus_labels.remove(&old_id) {
                         self.hidden_bus_labels.insert(new_id.clone());
+                        self.hidden_bus_labels_dirty = true;
                     }
                     if self.switch == old_id {
                         self.switch = new_id.clone();
@@ -427,9 +521,13 @@ impl App {
                     .changed()
                 {
                     if show_label {
-                        self.hidden_bus_labels.remove(&id);
+                        if self.hidden_bus_labels.remove(&id) {
+                            self.hidden_bus_labels_dirty = true;
+                        }
                     } else {
-                        self.hidden_bus_labels.insert(id.clone());
+                        if self.hidden_bus_labels.insert(id.clone()) {
+                            self.hidden_bus_labels_dirty = true;
+                        }
                     }
                 }
 
@@ -672,7 +770,9 @@ impl App {
         });
         for id in buses_to_remove {
             self.positions.remove(&id);
-            self.hidden_bus_labels.remove(&id);
+            if self.hidden_bus_labels.remove(&id) {
+                self.mark_hidden_bus_labels_dirty();
+            }
             if self.switch == id {
                 self.switch.clear();
             }
