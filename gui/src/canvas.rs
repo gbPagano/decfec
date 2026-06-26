@@ -24,7 +24,7 @@ const EDGE_LABEL_OFFSET: f32 = 14.0;
 /// Rótulos de ramos multiterminais precisam sair mais do centro do entroncamento.
 const MULTITERMINAL_EDGE_LABEL_OFFSET: f32 = 32.0;
 /// Distância do rótulo do barramento até o nó, em pixels de tela.
-const BUS_LABEL_OFFSET: f32 = 18.0;
+const BUS_LABEL_OFFSET: f32 = 14.0;
 /// Deslocamento abstrato usado só para escolher lados em coordenadas-mundo.
 const LABEL_DIRECTION_SCORE_OFFSET: f32 = 1.0;
 

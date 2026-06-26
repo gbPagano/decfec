@@ -14,6 +14,9 @@ use crate::engine::{self, Report};
 /// tempo de compilação — funciona em WASM, sem filesystem).
 const REDE_PADRAO: &str = include_str!("../../networks/ref-exercise.ron");
 const CENARIO_PADRAO: &str = include_str!("../../scenarios/item_a.ron");
+const NETWORK_KEY: &str = "decfec.network.ron.v1";
+const SCENARIO_KEY: &str = "decfec.scenario.ron.v1";
+const SELECTED_SET_KEY: &str = "decfec.selected_set.v1";
 const CANVAS_POSITIONS_KEY: &str = "decfec.canvas.positions.v1";
 const HIDDEN_BUS_LABELS_KEY: &str = "decfec.canvas.hidden_bus_labels.v1";
 
@@ -72,6 +75,12 @@ pub struct App {
     hidden_bus_labels: HashSet<String>,
     /// Se `true`, grava `hidden_bus_labels` no storage no fim do frame atual.
     hidden_bus_labels_dirty: bool,
+    /// Se `true`, grava a rede editada no storage no fim do frame atual.
+    network_dirty: bool,
+    /// Se `true`, grava o cenário/eventos no storage no fim do frame atual.
+    scenario_dirty: bool,
+    /// Se `true`, grava o conjunto selecionado no storage no fim do frame atual.
+    selected_set_dirty: bool,
 }
 
 impl App {
@@ -94,8 +103,20 @@ impl App {
             bus_id_editor: None,
             hidden_bus_labels: HashSet::new(),
             hidden_bus_labels_dirty: false,
+            network_dirty: false,
+            scenario_dirty: false,
+            selected_set_dirty: false,
         };
-        app.load_network();
+        let restored_network = cc
+            .storage
+            .is_some_and(|storage| app.restore_network(storage));
+        if let Some(storage) = cc.storage {
+            app.restore_scenario(storage);
+            app.restore_selected_set(storage);
+        }
+        if !restored_network {
+            app.load_network();
+        }
         if let Some(storage) = cc.storage {
             app.restore_canvas_positions(storage);
             app.restore_hidden_bus_labels(storage);
@@ -146,8 +167,82 @@ impl App {
             Ok(s) => {
                 self.scenario = s;
                 self.report = None;
+                self.mark_scenario_dirty();
             }
             Err(e) => self.report = Some(Err(e)),
+        }
+    }
+
+    fn restore_network(&mut self, storage: &dyn eframe::Storage) -> bool {
+        let Some(text) = storage.get_string(NETWORK_KEY) else {
+            return false;
+        };
+        let Ok(net) = Network::from_ron(&text) else {
+            return false;
+        };
+
+        self.net_ron = text;
+        self.positions = canvas::layout(&net);
+        self.net = Some(net);
+        self.revalidate();
+        true
+    }
+
+    fn save_network(&self, storage: &mut dyn eframe::Storage) {
+        if let Some(net) = &self.net {
+            storage.set_string(NETWORK_KEY, engine::network_to_ron(net));
+        }
+    }
+
+    fn restore_scenario(&mut self, storage: &dyn eframe::Storage) {
+        let Some(text) = storage.get_string(SCENARIO_KEY) else {
+            return;
+        };
+        if let Ok(scenario) = engine::load_scenario(&text) {
+            self.scenario = scenario;
+            self.scenario_ron = text;
+        }
+    }
+
+    fn save_scenario(&self, storage: &mut dyn eframe::Storage) {
+        storage.set_string(SCENARIO_KEY, engine::scenario_to_ron(&self.scenario));
+    }
+
+    fn restore_selected_set(&mut self, storage: &dyn eframe::Storage) {
+        if let Some(selected_set) = storage.get_string(SELECTED_SET_KEY) {
+            self.switch = selected_set;
+        }
+    }
+
+    fn save_selected_set(&self, storage: &mut dyn eframe::Storage) {
+        storage.set_string(SELECTED_SET_KEY, self.switch.clone());
+    }
+
+    fn flush_state(&mut self, frame: &mut eframe::Frame) {
+        if !self.network_dirty
+            && !self.scenario_dirty
+            && !self.selected_set_dirty
+            && !self.hidden_bus_labels_dirty
+        {
+            return;
+        }
+        if let Some(storage) = frame.storage_mut() {
+            if self.network_dirty {
+                self.save_network(storage);
+                self.network_dirty = false;
+            }
+            if self.scenario_dirty {
+                self.save_scenario(storage);
+                self.scenario_dirty = false;
+            }
+            if self.selected_set_dirty {
+                self.save_selected_set(storage);
+                self.selected_set_dirty = false;
+            }
+            if self.hidden_bus_labels_dirty {
+                self.save_hidden_bus_labels(storage);
+                self.hidden_bus_labels_dirty = false;
+            }
         }
     }
 
@@ -196,16 +291,6 @@ impl App {
         }
     }
 
-    fn flush_hidden_bus_labels(&mut self, frame: &mut eframe::Frame) {
-        if !self.hidden_bus_labels_dirty {
-            return;
-        }
-        if let Some(storage) = frame.storage_mut() {
-            self.save_hidden_bus_labels(storage);
-            self.hidden_bus_labels_dirty = false;
-        }
-    }
-
     fn retain_hidden_labels_for_loaded_network(&mut self) {
         let Some(net) = &self.net else {
             return;
@@ -220,6 +305,18 @@ impl App {
 
     fn mark_hidden_bus_labels_dirty(&mut self) {
         self.hidden_bus_labels_dirty = true;
+    }
+
+    fn mark_network_dirty(&mut self) {
+        self.network_dirty = true;
+    }
+
+    fn mark_scenario_dirty(&mut self) {
+        self.scenario_dirty = true;
+    }
+
+    fn mark_selected_set_dirty(&mut self) {
+        self.selected_set_dirty = true;
     }
 
     fn apply_hidden_bus_labels(&mut self, ids: Vec<String>) {
@@ -318,10 +415,13 @@ impl eframe::App for App {
 
         egui::CentralPanel::default().show_inside(ui, |ui| self.painel_canvas(ui));
 
-        self.flush_hidden_bus_labels(frame);
+        self.flush_state(frame);
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        self.save_network(storage);
+        self.save_scenario(storage);
+        self.save_selected_set(storage);
         self.save_canvas_positions(storage);
         self.save_hidden_bus_labels(storage);
     }
@@ -335,6 +435,7 @@ impl App {
             ui.strong("Rede");
             if ui.button("Recarregar do RON").clicked() {
                 self.load_network();
+                self.mark_network_dirty();
             }
             if ui.button("Novo vazio").clicked() {
                 self.reset_empty_network();
@@ -427,6 +528,7 @@ impl App {
         }
         self.report = None;
         self.net_status = Ok("canvas vazio".to_string());
+        self.mark_network_dirty();
     }
 
     /// Editor da entidade selecionada no canvas (barra ou ramo).
@@ -512,6 +614,8 @@ impl App {
                     self.canvas.set_selection(Selection::Bus(new_id.clone()));
                     self.bus_id_editor = Some((new_id.clone(), new_id));
                     self.report = None;
+                    self.mark_network_dirty();
+                    self.mark_scenario_dirty();
                     return self.revalidate();
                 }
 
@@ -532,6 +636,7 @@ impl App {
                 }
 
                 let bus = &mut net.buses[bus_idx];
+                let mut changed = false;
                 ui.horizontal(|ui| {
                     ui.label("Tipo:");
                     if ui
@@ -539,12 +644,14 @@ impl App {
                         .clicked()
                     {
                         bus.kind = BusKind::Substation;
+                        changed = true;
                     }
                     if ui
                         .selectable_label(bus.kind == BusKind::Junction, "Junção")
                         .clicked()
                     {
                         bus.kind = BusKind::Junction;
+                        changed = true;
                     }
                     if ui
                         .selectable_label(matches!(bus.kind, BusKind::Switch { .. }), "Chave")
@@ -554,14 +661,22 @@ impl App {
                         bus.kind = BusKind::Switch {
                             normal: State::Closed,
                         };
+                        changed = true;
                     }
                 });
                 if let BusKind::Switch { normal } = &mut bus.kind {
                     ui.horizontal(|ui| {
                         ui.label("Normal:");
-                        ui.radio_value(normal, State::Closed, "NF (fechada)");
-                        ui.radio_value(normal, State::Open, "NA / tie (aberta)");
+                        changed |= ui
+                            .radio_value(normal, State::Closed, "NF (fechada)")
+                            .changed();
+                        changed |= ui
+                            .radio_value(normal, State::Open, "NA / tie (aberta)")
+                            .changed();
                     });
+                }
+                if changed {
+                    self.network_dirty = true;
                 }
             }
             Selection::Branch(i) => {
@@ -592,11 +707,17 @@ impl App {
                     .changed()
                 {
                     b.nodes = parse_branch_nodes(nodes_buf);
+                    self.network_dirty = true;
                 }
 
                 match &mut b.element {
                     Element::Line { consumers } => {
-                        ui.add(egui::DragValue::new(consumers).prefix("consumidores: "));
+                        if ui
+                            .add(egui::DragValue::new(consumers).prefix("consumidores: "))
+                            .changed()
+                        {
+                            self.network_dirty = true;
+                        }
                     }
                 }
             }
@@ -697,6 +818,7 @@ impl App {
         self.positions.insert(id.clone(), pos);
         self.canvas.set_selection(Selection::Bus(id));
         self.revalidate();
+        self.mark_network_dirty();
     }
 
     /// Adiciona um ramo entre as barras selecionadas, ou entre as duas últimas.
@@ -734,6 +856,7 @@ impl App {
         self.branch_nodes_editor = None;
         self.bus_id_editor = None;
         self.revalidate();
+        self.mark_network_dirty();
     }
 
     /// Exclui a seleção: ramos e/ou barras (em cascata com seus ramos).
@@ -775,11 +898,13 @@ impl App {
             }
             if self.switch == id {
                 self.switch.clear();
+                self.mark_selected_set_dirty();
             }
         }
         self.branch_nodes_editor = None;
         self.bus_id_editor = None;
         self.revalidate();
+        self.mark_network_dirty();
     }
 
     /// Painel direito: seleção de conjunto, resultados e editor de eventos.
@@ -806,7 +931,7 @@ impl App {
             } else {
                 format!("a jusante de {}", self.switch)
             };
-            egui::ComboBox::from_id_salt("conjunto")
+            let conjunto_resp = egui::ComboBox::from_id_salt("conjunto")
                 .selected_text(texto)
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut self.switch, String::new(), "Sistema inteiro");
@@ -814,6 +939,9 @@ impl App {
                         ui.selectable_value(&mut self.switch, id.clone(), id);
                     }
                 });
+            if conjunto_resp.response.changed() {
+                self.mark_selected_set_dirty();
+            }
             if ui.button("▶ Simular").clicked() {
                 self.simulate();
             }
@@ -830,33 +958,39 @@ impl App {
                     bus: bus_ids.first().cloned().unwrap_or_default(),
                     action: Action::Fault,
                 });
+                self.mark_scenario_dirty();
             }
             if ui.button("ordenar por tempo").clicked() {
                 self.scenario
                     .events
                     .sort_by(|a, b| a.at_min.total_cmp(&b.at_min));
+                self.mark_scenario_dirty();
             }
         });
 
         let mut remover: Option<usize> = None;
+        let mut scenario_changed = false;
         egui::ScrollArea::vertical()
             .id_salt("scroll_eventos")
             .max_height(280.0)
             .show(ui, |ui| {
                 for (i, ev) in self.scenario.events.iter_mut().enumerate() {
                     ui.horizontal(|ui| {
-                        ui.add(
-                            egui::DragValue::new(&mut ev.at_min)
-                                .suffix(" min")
-                                .range(0.0..=f64::MAX)
-                                .speed(1.0),
-                        );
+                        scenario_changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut ev.at_min)
+                                    .suffix(" min")
+                                    .range(0.0..=f64::MAX)
+                                    .speed(1.0),
+                            )
+                            .changed();
                         egui::ComboBox::from_id_salt(("ev_bus", i))
                             .selected_text(ev.bus.clone())
                             .width(90.0)
                             .show_ui(ui, |ui| {
                                 for id in &bus_ids {
-                                    ui.selectable_value(&mut ev.bus, id.clone(), id);
+                                    scenario_changed |=
+                                        ui.selectable_value(&mut ev.bus, id.clone(), id).changed();
                                 }
                             });
                         egui::ComboBox::from_id_salt(("ev_action", i))
@@ -865,7 +999,9 @@ impl App {
                                 for a in
                                     [Action::Fault, Action::Repair, Action::Open, Action::Close]
                                 {
-                                    ui.selectable_value(&mut ev.action, a, action_label(a));
+                                    scenario_changed |= ui
+                                        .selectable_value(&mut ev.action, a, action_label(a))
+                                        .changed();
                                 }
                             });
                         if ui.small_button("X").clicked() {
@@ -876,6 +1012,10 @@ impl App {
             });
         if let Some(i) = remover {
             self.scenario.events.remove(i);
+            scenario_changed = true;
+        }
+        if scenario_changed {
+            self.mark_scenario_dirty();
         }
 
         ui.separator();
