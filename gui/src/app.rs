@@ -121,6 +121,10 @@ pub struct App {
     selected_set_dirty: bool,
     /// Janela modal de import/export RON aberta, se houver.
     ron_dialog: Option<RonDialog>,
+    /// Se `true`, exibe a janela de ajuda da aplicação.
+    help_open: bool,
+    /// Reposiciona a ajuda no centro apenas no primeiro frame da abertura.
+    help_center_on_open: bool,
     /// Resultado assíncrono de upload/download em WASM.
     pending_file_result: PendingFileResult,
 }
@@ -147,6 +151,8 @@ impl App {
             scenario_dirty: false,
             selected_set_dirty: false,
             ron_dialog: None,
+            help_open: false,
+            help_center_on_open: false,
             pending_file_result: Rc::new(RefCell::new(None)),
         };
         let restored_network = cc
@@ -436,6 +442,100 @@ impl App {
         }
     }
 
+    fn help_window(&mut self, ctx: &egui::Context) {
+        if !self.help_open {
+            return;
+        }
+
+        let mut window = egui::Window::new("Ajuda")
+            .collapsible(false)
+            .resizable(true)
+            .default_width(560.0)
+            .default_height(520.0);
+        if self.help_center_on_open {
+            window = window.anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO);
+            self.help_center_on_open = false;
+        }
+
+        window.open(&mut self.help_open).show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("help_window_scroll")
+                    .show(ui, |ui| {
+                        ui.heading("Como usar o programa");
+                        ui.label(
+                            "Monte ou importe uma rede, descreva os eventos do cenário e clique em Simular para calcular DEC/FEC do sistema inteiro ou de um conjunto a jusante.",
+                        );
+
+                        ui.separator();
+                        ui.strong("Rede e grafo");
+                        ui.label("- Use + Barra para criar um novo barramento no centro da vista.");
+                        ui.label("- Use + Ramo para criar uma ligação entre barras.");
+                        ui.label(
+                            "- Se houver duas ou mais barras selecionadas, + Ramo conecta as selecionadas.",
+                        );
+                        ui.label(
+                            "- Se não houver duas barras selecionadas, + Ramo conecta automaticamente as duas últimas barras criadas.",
+                        );
+                        ui.label("- Arraste uma barra para reposicionar no canvas.");
+                        ui.label("- Arraste o fundo para mover a vista e use a roda do mouse para zoom.");
+                        ui.label("- Ajustar à vista reenquadra a rede; Auto-layout reorganiza as barras.");
+
+                        ui.add_space(6.0);
+                        ui.strong("Seleção e edição");
+                        ui.label("- Clique em uma barra ou ramo para editar no painel Rede.");
+                        ui.label(
+                            "- Segure Ctrl enquanto clica para selecionar várias barras ou alternar itens na seleção.",
+                        );
+                        ui.label("- Use Delete ou Excluir seleção para remover itens selecionados.");
+                        ui.label(
+                            "- Para esconder o label de uma barra, selecione a barra e desmarque Exibir label no grafo.",
+                        );
+                        ui.label(
+                            "- Barras podem ser Subestação, Junção ou Chave. Para chaves, escolha NF ou NA/tie.",
+                        );
+                        ui.label(
+                            "- Ramos representam trechos de linha e guardam o número de consumidores daquele bloco.",
+                        );
+
+                        ui.add_space(6.0);
+                        ui.strong("Cenário e simulação");
+                        ui.label(
+                            "- No painel da direita, escolha Sistema inteiro ou um conjunto a jusante de uma chave.",
+                        );
+                        ui.label("- Adicione eventos com tempo em minutos, barra e ação.");
+                        ui.label("- Fault cria a falta, Repair remove a falta, Open abre uma chave e Close fecha.");
+                        ui.label(
+                            "- Para transferir carga, normalmente use Open na chave de seccionamento e Close na chave NA/tie.",
+                        );
+                        ui.label("- Ordenar por tempo ajuda a revisar a sequência antes de simular.");
+
+                        ui.add_space(6.0);
+                        ui.strong("Importar e exportar");
+                        ui.label(
+                            "- Rede > Importar/Exportar trabalha com a rede e o layout do canvas em RON.",
+                        );
+                        ui.label(
+                            "- Eventos > Importar/Exportar trabalha apenas com o cenário de eventos em RON.",
+                        );
+                        ui.label(
+                            "- No navegador, use Upload de arquivo e Download de arquivo dentro das janelas de import/export.",
+                        );
+                        ui.label(
+                            "- O estado editado graficamente é a fonte da verdade. Exporte para gerar o RON atualizado.",
+                        );
+
+                        ui.add_space(6.0);
+                        ui.strong("Dicas");
+                        ui.label(
+                            "- Se uma simulação der erro, confira ids duplicados, ramos sem nós válidos e eventos apontando para barras existentes.",
+                        );
+                        ui.label(
+                            "- Interrupções menores que 3 minutos são tratadas como momentâneas e não entram no DEC/FEC.",
+                        );
+                    });
+        });
+    }
+
     fn handle_ron_dialog_action(&mut self, ctx: &egui::Context, action: RonDialogAction) {
         match action {
             RonDialogAction::ImportText { kind, text } => {
@@ -529,7 +629,15 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         egui::Panel::top("titulo").show_inside(ui, |ui| {
             ui.add_space(4.0);
-            ui.heading("DEC/FEC: Calculadora de Indicadores");
+            ui.horizontal(|ui| {
+                ui.heading("DEC/FEC: Calculadora de Indicadores");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Ajuda").clicked() {
+                        self.help_open = true;
+                        self.help_center_on_open = true;
+                    }
+                });
+            });
             ui.add_space(4.0);
         });
 
@@ -547,6 +655,7 @@ impl eframe::App for App {
 
         self.handle_pending_file_result();
         self.ron_dialog(ui.ctx());
+        self.help_window(ui.ctx());
         self.flush_state(frame);
     }
 
