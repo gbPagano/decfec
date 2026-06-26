@@ -14,6 +14,7 @@ use crate::engine::{self, Report};
 /// tempo de compilação — funciona em WASM, sem filesystem).
 const REDE_PADRAO: &str = include_str!("../../networks/ref-exercise.ron");
 const CENARIO_PADRAO: &str = include_str!("../../scenarios/item_a.ron");
+const LAYOUT_PADRAO: &str = include_str!("../default-layout.ron");
 const NETWORK_KEY: &str = "decfec.network.ron.v1";
 const SCENARIO_KEY: &str = "decfec.scenario.ron.v1";
 const SELECTED_SET_KEY: &str = "decfec.selected_set.v1";
@@ -89,7 +90,7 @@ impl App {
         let mut app = Self {
             net_ron: REDE_PADRAO.to_string(),
             scenario_ron: CENARIO_PADRAO.to_string(),
-            layout_ron: String::new(),
+            layout_ron: LAYOUT_PADRAO.to_string(),
             scenario: engine::load_scenario(CENARIO_PADRAO)
                 .unwrap_or_else(|_| Scenario { events: Vec::new() }),
             switch: "2".to_string(),
@@ -117,8 +118,13 @@ impl App {
         if !restored_network {
             app.load_network();
         }
+        let restored_layout = cc
+            .storage
+            .is_some_and(|storage| app.restore_canvas_positions(storage));
+        if !restored_network && !restored_layout {
+            let _ = app.apply_canvas_layout(LAYOUT_PADRAO);
+        }
         if let Some(storage) = cc.storage {
-            app.restore_canvas_positions(storage);
             app.restore_hidden_bus_labels(storage);
         }
         app
@@ -246,21 +252,31 @@ impl App {
         }
     }
 
-    fn restore_canvas_positions(&mut self, storage: &dyn eframe::Storage) {
+    fn restore_canvas_positions(&mut self, storage: &dyn eframe::Storage) -> bool {
         let Some(saved) = storage.get_string(CANVAS_POSITIONS_KEY) else {
-            return;
+            return false;
         };
-        let Ok(saved) = ron::from_str::<SavedCanvasPositions>(&saved) else {
-            return;
-        };
+        self.apply_canvas_layout(&saved).is_ok()
+    }
+
+    fn apply_canvas_layout(&mut self, text: &str) -> Result<usize, ron::error::SpannedError> {
+        let saved = ron::from_str::<SavedCanvasPositions>(text)?;
+        let applied = self.apply_saved_canvas_layout(saved);
+        Ok(applied)
+    }
+
+    fn apply_saved_canvas_layout(&mut self, saved: SavedCanvasPositions) -> usize {
+        let mut applied = 0;
         for p in saved.positions {
             if let std::collections::hash_map::Entry::Occupied(mut entry) =
                 self.positions.entry(p.id)
             {
                 entry.insert(Pos2::new(p.x, p.y));
+                applied += 1;
             }
         }
         self.apply_hidden_bus_labels(saved.hidden_bus_labels);
+        applied
     }
 
     fn save_canvas_positions(&self, storage: &mut dyn eframe::Storage) {
@@ -372,24 +388,13 @@ impl App {
     }
 
     fn import_canvas_layout(&mut self) {
-        let saved = match ron::from_str::<SavedCanvasPositions>(&self.layout_ron) {
-            Ok(saved) => saved,
+        let applied = match self.apply_canvas_layout(&self.layout_ron.clone()) {
+            Ok(applied) => applied,
             Err(e) => {
                 self.layout_status = Some(Err(format!("erro de parse no layout: {e}")));
                 return;
             }
         };
-
-        let mut applied = 0;
-        for p in saved.positions {
-            if let std::collections::hash_map::Entry::Occupied(mut entry) =
-                self.positions.entry(p.id)
-            {
-                entry.insert(Pos2::new(p.x, p.y));
-                applied += 1;
-            }
-        }
-        self.apply_hidden_bus_labels(saved.hidden_bus_labels);
         self.canvas.request_fit();
         self.layout_status = Some(Ok(format!("{applied} posições aplicadas")));
     }
