@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use decfec::fault::{Action, Event, Scenario};
 use decfec::topology::{Branch, Bus, BusKind, Element, Network, State};
-use egui::{Pos2, Vec2};
+use egui::Pos2;
 use serde::{Deserialize, Serialize};
 
 use crate::canvas::{self, CanvasState, Selection};
@@ -798,7 +798,7 @@ impl App {
 
     /// Adiciona um barramento novo (junção) perto do centro da vista e o seleciona.
     fn add_bus(&mut self) {
-        let pos = centroid(&self.positions) + Vec2::new(60.0, 0.0);
+        let pos = self.canvas.insertion_pos();
         let Some(net) = self.net.as_mut() else {
             return;
         };
@@ -1057,18 +1057,6 @@ impl App {
             }
         }
     }
-}
-
-/// Centro geométrico das posições atuais (origem se vazio).
-fn centroid(positions: &HashMap<String, Pos2>) -> Pos2 {
-    if positions.is_empty() {
-        return Pos2::ZERO;
-    }
-    let n = positions.len() as f32;
-    let soma = positions
-        .values()
-        .fold(Vec2::ZERO, |acc, p| acc + p.to_vec2());
-    (soma / n).to_pos2()
 }
 
 /// Primeiro id `{prefixo}{n}` (n≥1) que não colide com os existentes.

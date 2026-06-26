@@ -59,6 +59,8 @@ pub struct CanvasState {
     needs_fit: bool,
     /// O que o arrasto atual está movendo.
     drag: Drag,
+    /// Centro visível atual, em coordenadas-mundo.
+    view_center_world: Pos2,
     /// Seleções atuais (lidas pelo painel de edição).
     pub selections: Vec<Selection>,
 }
@@ -76,6 +78,7 @@ impl Default for CanvasState {
             zoom: 1.0,
             needs_fit: true,
             drag: Drag::None,
+            view_center_world: Pos2::ZERO,
             selections: Vec::new(),
         }
     }
@@ -94,6 +97,11 @@ impl CanvasState {
 
     pub fn clear_selection(&mut self) {
         self.selections.clear();
+    }
+
+    /// Posição para criar um nó novo: centro visível atual do canvas.
+    pub fn insertion_pos(&self) -> Pos2 {
+        self.view_center_world
     }
 
     fn is_selected(&self, selection: &Selection) -> bool {
@@ -243,6 +251,8 @@ pub fn draw(
             st.clear_selection();
         }
     }
+
+    st.view_center_world = to_world(center, pan, zoom, center);
 
     paint(
         &painter,
