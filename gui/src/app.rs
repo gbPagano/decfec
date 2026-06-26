@@ -1,6 +1,6 @@
 //! Estado e laço de UI da aplicação.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use decfec::fault::{Action, Event, Scenario};
 use decfec::topology::{Branch, Bus, BusKind, Element, Network, State};
@@ -60,6 +60,8 @@ pub struct App {
     branch_nodes_editor: Option<(usize, String)>,
     /// Texto em edição para o id da barra selecionada.
     bus_id_editor: Option<(String, String)>,
+    /// Labels de barramentos ocultos no canvas (estado visual da GUI).
+    hidden_bus_labels: HashSet<String>,
 }
 
 impl App {
@@ -80,6 +82,7 @@ impl App {
             layout_status: None,
             branch_nodes_editor: None,
             bus_id_editor: None,
+            hidden_bus_labels: HashSet::new(),
         };
         app.load_network();
         if let Some(storage) = cc.storage {
@@ -113,6 +116,7 @@ impl App {
         self.report = None;
         self.branch_nodes_editor = None;
         self.bus_id_editor = None;
+        self.hidden_bus_labels.clear();
     }
 
     /// Roda a simulação com a rede carregada e o cenário/chave atuais.
@@ -327,6 +331,7 @@ impl App {
         self.canvas.selection = None;
         self.branch_nodes_editor = None;
         self.bus_id_editor = None;
+        self.hidden_bus_labels.clear();
         self.report = None;
         self.net_status = Ok("canvas vazio".to_string());
     }
@@ -393,6 +398,9 @@ impl App {
                     if let Some(pos) = self.positions.remove(&old_id) {
                         self.positions.insert(new_id.clone(), pos);
                     }
+                    if self.hidden_bus_labels.remove(&old_id) {
+                        self.hidden_bus_labels.insert(new_id.clone());
+                    }
                     if self.switch == old_id {
                         self.switch = new_id.clone();
                     }
@@ -405,6 +413,18 @@ impl App {
                     self.bus_id_editor = Some((new_id.clone(), new_id));
                     self.report = None;
                     return self.revalidate();
+                }
+
+                let mut show_label = !self.hidden_bus_labels.contains(&id);
+                if ui
+                    .checkbox(&mut show_label, "Exibir label no grafo")
+                    .changed()
+                {
+                    if show_label {
+                        self.hidden_bus_labels.remove(&id);
+                    } else {
+                        self.hidden_bus_labels.insert(id.clone());
+                    }
                 }
 
                 let bus = &mut net.buses[bus_idx];
@@ -534,7 +554,13 @@ impl App {
             });
             return;
         };
-        canvas::draw(ui, net, &mut self.positions, &mut self.canvas);
+        canvas::draw(
+            ui,
+            net,
+            &mut self.positions,
+            &mut self.canvas,
+            &self.hidden_bus_labels,
+        );
     }
 
     /// Recalcula o layout automático e reenquadra (útil após importar/editar).
@@ -596,6 +622,7 @@ impl App {
                 net.buses.retain(|b| b.id != id);
                 net.branches.retain(|b| !b.nodes.iter().any(|n| n == &id));
                 self.positions.remove(&id);
+                self.hidden_bus_labels.remove(&id);
             }
             Selection::Branch(i) => {
                 if i < net.branches.len() {

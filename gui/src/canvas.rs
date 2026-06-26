@@ -5,7 +5,7 @@
 //! ([`CanvasState`]) com pan/zoom mapeia mundo→tela; assim arrastar um nó não
 //! reescala o grafo inteiro (o que aconteceria com um fit-to-view por quadro).
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use egui::{Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2};
 
@@ -21,6 +21,12 @@ const NODE_R: f32 = 7.0;
 const HIT_SLOP: f32 = 6.0;
 /// Distância do rótulo do ramo até a linha desenhada, em pixels de tela.
 const EDGE_LABEL_OFFSET: f32 = 14.0;
+/// Rótulos de ramos multiterminais precisam sair mais do centro do entroncamento.
+const MULTITERMINAL_EDGE_LABEL_OFFSET: f32 = 32.0;
+/// Distância do rótulo do barramento até o nó, em pixels de tela.
+const BUS_LABEL_OFFSET: f32 = 18.0;
+/// Deslocamento abstrato usado só para escolher lados em coordenadas-mundo.
+const LABEL_DIRECTION_SCORE_OFFSET: f32 = 1.0;
 
 /// O que está selecionado no canvas.
 #[derive(Clone, PartialEq)]
@@ -29,6 +35,18 @@ pub enum Selection {
     Bus(String),
     /// Um ramo, por índice em [`Network::branches`].
     Branch(usize),
+}
+
+struct BranchVisual {
+    world_segments: Vec<(Pos2, Pos2)>,
+    world_label_pos: Option<Pos2>,
+}
+
+#[derive(Clone, Copy)]
+struct Camera {
+    center: Pos2,
+    pan: Vec2,
+    zoom: f32,
 }
 
 /// Estado de câmera/interação do canvas (persiste entre quadros).
@@ -129,6 +147,7 @@ pub fn draw(
     net: &Network,
     positions: &mut HashMap<String, Pos2>,
     st: &mut CanvasState,
+    hidden_bus_labels: &HashSet<String>,
 ) {
     let (resp, painter) = ui.allocate_painter(ui.available_size(), Sense::click_and_drag());
     let rect = resp.rect;
@@ -191,7 +210,14 @@ pub fn draw(
             .or_else(|| edge_at(net, positions, center, pan, zoom, p).map(Selection::Branch));
     }
 
-    paint(&painter, net, positions, st, center, pan, zoom);
+    paint(
+        &painter,
+        net,
+        positions,
+        st,
+        hidden_bus_labels,
+        Camera { center, pan, zoom },
+    );
 
     st.pan = pan;
     st.zoom = zoom;
@@ -203,10 +229,11 @@ fn paint(
     net: &Network,
     positions: &HashMap<String, Pos2>,
     st: &CanvasState,
-    center: Pos2,
-    pan: Vec2,
-    zoom: f32,
+    hidden_bus_labels: &HashSet<String>,
+    camera: Camera,
 ) {
+    let mut branch_visuals = Vec::new();
+
     // Arestas primeiro, para os nós ficarem por cima.
     for (i, b) in net.branches.iter().enumerate() {
         let points: Vec<Pos2> = b
@@ -219,45 +246,55 @@ fn paint(
         }
         let screen_points: Vec<Pos2> = points
             .iter()
-            .map(|&p| to_screen(center, pan, zoom, p))
+            .map(|&p| to_screen(camera.center, camera.pan, camera.zoom, p))
             .collect();
+        let world_branch_center = midpoint(&points);
         let branch_center = midpoint(&screen_points);
-        let label_pos = edge_label_pos(&screen_points);
+        let label_dir = edge_label_direction(&points);
+        let label_pos = edge_label_pos(&screen_points, label_dir);
+        let label = edge_label(&b.element);
+        let has_label = label.is_some();
+        let segments: Vec<(Pos2, Pos2)> = if screen_points.len() == 2 {
+            vec![(screen_points[0], screen_points[1])]
+        } else {
+            screen_points.iter().map(|&p| (branch_center, p)).collect()
+        };
+        let world_segments: Vec<(Pos2, Pos2)> = if points.len() == 2 {
+            vec![(points[0], points[1])]
+        } else {
+            points.iter().map(|&p| (world_branch_center, p)).collect()
+        };
         let (mut cor, mut largura, tracejada) = edge_style(&b.element);
         if st.selection == Some(Selection::Branch(i)) {
             cor = Color32::from_rgb(250, 240, 120);
             largura += 1.5;
         }
 
-        if screen_points.len() == 2 {
-            paint_segment(
-                painter,
-                screen_points[0],
-                screen_points[1],
-                largura,
-                cor,
-                tracejada,
-            );
-        } else {
-            for &p in &screen_points {
-                paint_segment(painter, branch_center, p, largura, cor, tracejada);
-            }
+        for &(a, z) in &segments {
+            paint_segment(painter, a, z, largura, cor, tracejada);
         }
 
-        painter.text(
-            label_pos,
-            egui::Align2::CENTER_CENTER,
-            edge_label(&b.element),
-            FontId::proportional(11.0),
-            cor,
-        );
+        if let Some(label) = label {
+            painter.text(
+                label_pos,
+                egui::Align2::CENTER_CENTER,
+                label,
+                FontId::proportional(11.0),
+                cor,
+            );
+        }
+        branch_visuals.push(BranchVisual {
+            world_segments,
+            world_label_pos: has_label
+                .then_some(world_branch_center + label_dir * LABEL_DIRECTION_SCORE_OFFSET),
+        });
     }
 
     for bus in &net.buses {
         let Some(&p) = positions.get(&bus.id) else {
             continue;
         };
-        let c = to_screen(center, pan, zoom, p);
+        let c = to_screen(camera.center, camera.pan, camera.zoom, p);
         let (preenchimento, mut contorno) = match bus.kind {
             BusKind::Substation => (Color32::from_rgb(80, 130, 230), Color32::WHITE),
             BusKind::Junction => (Color32::from_gray(70), Color32::from_gray(180)),
@@ -280,8 +317,11 @@ fn paint(
             largura = 3.0;
         }
         painter.circle(c, NODE_R, preenchimento, Stroke::new(largura, contorno));
+        if hidden_bus_labels.contains(&bus.id) {
+            continue;
+        }
         painter.text(
-            c + Vec2::new(0.0, -NODE_R - 8.0),
+            bus_label_pos(p, c, &branch_visuals),
             egui::Align2::CENTER_CENTER,
             &bus.id,
             FontId::proportional(11.0),
@@ -305,8 +345,8 @@ fn midpoint(points: &[Pos2]) -> Pos2 {
     (sum / points.len() as f32).to_pos2()
 }
 
-/// Posição do rótulo do ramo fora da linha, preferindo acima ou ao lado.
-fn edge_label_pos(points: &[Pos2]) -> Pos2 {
+/// Direção estável do rótulo do ramo, escolhida em coordenadas-mundo.
+fn edge_label_direction(points: &[Pos2]) -> Vec2 {
     let center = midpoint(points);
     let dirs = [
         Vec2::new(0.0, -1.0),
@@ -317,12 +357,70 @@ fn edge_label_pos(points: &[Pos2]) -> Pos2 {
     ];
 
     dirs.into_iter()
-        .map(|dir| center + dir * EDGE_LABEL_OFFSET)
-        .max_by(|a, b| {
-            distance_to_branch(*a, points, center)
-                .total_cmp(&distance_to_branch(*b, points, center))
+        .enumerate()
+        .map(|(i, dir)| {
+            let pos = center + dir * LABEL_DIRECTION_SCORE_OFFSET;
+            let score = distance_to_branch(pos, points, center) - i as f32 * 0.01;
+            (dir, score)
         })
-        .unwrap_or(center)
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(dir, _)| dir)
+        .unwrap_or(Vec2::new(0.0, -1.0))
+}
+
+/// Posição do rótulo do ramo fora da linha, usando uma direção estável.
+fn edge_label_pos(points: &[Pos2], dir: Vec2) -> Pos2 {
+    let offset = if points.len() > 2 {
+        MULTITERMINAL_EDGE_LABEL_OFFSET
+    } else {
+        EDGE_LABEL_OFFSET
+    };
+
+    midpoint(points) + dir * offset
+}
+
+/// Posição do rótulo do barramento com menor chance de sobrepor ramos e seus rótulos.
+fn bus_label_pos(world_node: Pos2, screen_node: Pos2, branches: &[BranchVisual]) -> Pos2 {
+    let offset = NODE_R + BUS_LABEL_OFFSET;
+    let dirs = [
+        Vec2::new(0.0, -1.0),
+        Vec2::new(1.0, 0.0),
+        Vec2::new(-1.0, 0.0),
+        Vec2::new(0.0, 1.0),
+        Vec2::new(1.0, -1.0).normalized(),
+        Vec2::new(-1.0, -1.0).normalized(),
+        Vec2::new(1.0, 1.0).normalized(),
+        Vec2::new(-1.0, 1.0).normalized(),
+    ];
+
+    dirs.into_iter()
+        .enumerate()
+        .map(|(i, dir)| {
+            let pos = world_node + dir * LABEL_DIRECTION_SCORE_OFFSET;
+            let score = bus_label_score(pos, branches) - i as f32 * 0.01;
+            (dir, score)
+        })
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(dir, _)| screen_node + dir * offset)
+        .unwrap_or(screen_node + Vec2::new(0.0, -offset))
+}
+
+fn bus_label_score(pos: Pos2, branches: &[BranchVisual]) -> f32 {
+    let segment_distance = branches
+        .iter()
+        .flat_map(|branch| branch.world_segments.iter())
+        .map(|&(a, z)| dist_to_segment(pos, a, z))
+        .fold(f32::INFINITY, f32::min)
+        .min(48.0);
+
+    let label_distance = branches
+        .iter()
+        .filter_map(|branch| branch.world_label_pos)
+        .map(|label_pos| pos.distance(label_pos))
+        .fold(f32::INFINITY, f32::min)
+        .min(48.0);
+
+    segment_distance + label_distance
 }
 
 fn distance_to_branch(p: Pos2, points: &[Pos2], center: Pos2) -> f32 {
@@ -455,10 +553,11 @@ fn edge_style(el: &Element) -> (Color32, f32, bool) {
     }
 }
 
-/// Rótulo de uma aresta: apenas a quantidade de consumidores do ramo.
-fn edge_label(el: &Element) -> String {
+/// Rótulo de uma aresta: apenas a quantidade de consumidores do ramo, se houver.
+fn edge_label(el: &Element) -> Option<String> {
     match el {
-        Element::Line { consumers } => consumers.to_string(),
+        Element::Line { consumers } if *consumers > 0 => Some(consumers.to_string()),
+        Element::Line { .. } => None,
     }
 }
 
