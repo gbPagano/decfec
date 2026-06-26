@@ -1,6 +1,10 @@
 //! Estado e laço de UI da aplicação.
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
 use decfec::fault::{Action, Event, Scenario};
 use decfec::topology::{Branch, Bus, BusKind, Element, Network, State};
@@ -40,6 +44,43 @@ struct SavedNodePosition {
     y: f32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum RonKind {
+    Network,
+    Scenario,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum RonMode {
+    Import,
+    Export,
+}
+
+struct RonDialog {
+    kind: RonKind,
+    mode: RonMode,
+    text: String,
+    status: Option<Result<String, String>>,
+}
+
+enum FileResult {
+    Uploaded {
+        kind: RonKind,
+        text: String,
+        name: String,
+    },
+    Downloaded {
+        kind: RonKind,
+        name: String,
+    },
+    Error {
+        kind: RonKind,
+        message: String,
+    },
+}
+
+type PendingFileResult = Rc<RefCell<Option<FileResult>>>;
+
 /// Aplicação egui.
 ///
 /// Nesta etapa o fluxo é dirigido por texto RON (rede + cenário). O editor de
@@ -78,6 +119,10 @@ pub struct App {
     scenario_dirty: bool,
     /// Se `true`, grava o conjunto selecionado no storage no fim do frame atual.
     selected_set_dirty: bool,
+    /// Janela modal de import/export RON aberta, se houver.
+    ron_dialog: Option<RonDialog>,
+    /// Resultado assíncrono de upload/download em WASM.
+    pending_file_result: PendingFileResult,
 }
 
 impl App {
@@ -101,6 +146,8 @@ impl App {
             network_dirty: false,
             scenario_dirty: false,
             selected_set_dirty: false,
+            ron_dialog: None,
+            pending_file_result: Rc::new(RefCell::new(None)),
         };
         let restored_network = cc
             .storage
@@ -146,18 +193,6 @@ impl App {
             Some(net) => engine::run(net, &self.scenario, Some(switch)),
             None => Err("carregue uma rede válida antes de simular".to_string()),
         });
-    }
-
-    /// Reparseia o cenário a partir do texto RON (botão "Recarregar").
-    fn load_scenario_from_ron(&mut self) {
-        match engine::load_scenario(&self.scenario_ron) {
-            Ok(s) => {
-                self.scenario = s;
-                self.report = None;
-                self.mark_scenario_dirty();
-            }
-            Err(e) => self.report = Some(Err(e)),
-        }
     }
 
     fn restore_network(&mut self, storage: &dyn eframe::Storage) -> bool {
@@ -319,6 +354,175 @@ impl App {
             layout: self.saved_canvas_positions(),
         })
     }
+
+    fn ron_text(&self, kind: RonKind) -> String {
+        match kind {
+            RonKind::Network => self
+                .network_document_to_ron()
+                .unwrap_or_else(|_| self.net_ron.clone()),
+            RonKind::Scenario => engine::scenario_to_ron(&self.scenario),
+        }
+    }
+
+    fn open_ron_dialog(&mut self, kind: RonKind, mode: RonMode) {
+        self.ron_dialog = Some(RonDialog {
+            kind,
+            mode,
+            text: self.ron_text(kind),
+            status: None,
+        });
+    }
+
+    fn ron_dialog(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.ron_dialog else {
+            return;
+        };
+
+        let mut open = true;
+        let mut action = None;
+        egui::Window::new(dialog_title(dialog.kind, dialog.mode))
+            .collapsible(false)
+            .resizable(true)
+            .default_width(680.0)
+            .default_height(520.0)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| match dialog.mode {
+                    RonMode::Import => {
+                        if ui.button("Upload de arquivo").clicked() {
+                            action = Some(RonDialogAction::Upload(dialog.kind));
+                        }
+                        if ui.button("Importar texto").clicked() {
+                            action = Some(RonDialogAction::ImportText {
+                                kind: dialog.kind,
+                                text: dialog.text.clone(),
+                            });
+                        }
+                    }
+                    RonMode::Export => {
+                        if ui.button("Download de arquivo").clicked() {
+                            action = Some(RonDialogAction::Download {
+                                kind: dialog.kind,
+                                text: dialog.text.clone(),
+                            });
+                        }
+                    }
+                });
+                if let Some(status) = &dialog.status {
+                    match status {
+                        Ok(msg) => ui.colored_label(egui::Color32::from_rgb(120, 200, 120), msg),
+                        Err(e) => ui.colored_label(egui::Color32::from_rgb(230, 120, 120), e),
+                    };
+                }
+                ui.add_space(4.0);
+                egui::ScrollArea::both()
+                    .id_salt(("ron_dialog_scroll", dialog.kind, dialog.mode))
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut dialog.text)
+                                .code_editor()
+                                .desired_width(f32::INFINITY)
+                                .desired_rows(22),
+                        );
+                    });
+            });
+
+        if !open {
+            self.ron_dialog = None;
+            return;
+        }
+        if let Some(action) = action {
+            self.handle_ron_dialog_action(ctx, action);
+        }
+    }
+
+    fn handle_ron_dialog_action(&mut self, ctx: &egui::Context, action: RonDialogAction) {
+        match action {
+            RonDialogAction::ImportText { kind, text } => {
+                let status = self.import_ron_text(kind, text);
+                if let Some(dialog) = &mut self.ron_dialog {
+                    dialog.status = Some(status);
+                }
+            }
+            RonDialogAction::Upload(kind) => {
+                pick_ron_file(kind, self.pending_file_result.clone(), ctx.clone())
+            }
+            RonDialogAction::Download { kind, text } => {
+                save_ron_file(kind, text, self.pending_file_result.clone(), ctx.clone())
+            }
+        }
+    }
+
+    fn import_ron_text(&mut self, kind: RonKind, text: String) -> Result<String, String> {
+        match kind {
+            RonKind::Network => {
+                self.net_ron = text;
+                self.load_network();
+                self.mark_network_dirty();
+                match &self.net_status {
+                    Ok(msg) => Ok(format!("rede importada: {msg}")),
+                    Err(e) => Err(e.clone()),
+                }
+            }
+            RonKind::Scenario => match engine::load_scenario(&text) {
+                Ok(scenario) => {
+                    self.scenario = scenario;
+                    self.scenario_ron = text;
+                    self.report = None;
+                    self.mark_scenario_dirty();
+                    Ok(format!("{} eventos importados", self.scenario.events.len()))
+                }
+                Err(e) => {
+                    self.report = Some(Err(e.clone()));
+                    Err(e)
+                }
+            },
+        }
+    }
+
+    fn handle_pending_file_result(&mut self) {
+        let Some(result) = self.pending_file_result.borrow_mut().take() else {
+            return;
+        };
+
+        match result {
+            FileResult::Uploaded { kind, text, name } => {
+                let status = self
+                    .import_ron_text(kind, text.clone())
+                    .map(|msg| format!("arquivo '{name}' importado: {msg}"))
+                    .map_err(|e| format!("arquivo '{name}' carregado, mas não importado: {e}"));
+                if !matches!(self.ron_dialog.as_ref(), Some(dialog) if dialog.kind == kind) {
+                    self.open_ron_dialog(kind, RonMode::Import);
+                }
+                if let Some(dialog) = &mut self.ron_dialog {
+                    dialog.kind = kind;
+                    dialog.mode = RonMode::Import;
+                    dialog.text = text;
+                    dialog.status = Some(status);
+                }
+            }
+            FileResult::Downloaded { kind, name } => {
+                if let Some(dialog) = &mut self.ron_dialog
+                    && dialog.kind == kind
+                {
+                    dialog.status = Some(Ok(format!("arquivo '{name}' salvo")));
+                }
+            }
+            FileResult::Error { kind, message } => {
+                if let Some(dialog) = &mut self.ron_dialog
+                    && dialog.kind == kind
+                {
+                    dialog.status = Some(Err(message));
+                }
+            }
+        }
+    }
+}
+
+enum RonDialogAction {
+    ImportText { kind: RonKind, text: String },
+    Upload(RonKind),
+    Download { kind: RonKind, text: String },
 }
 
 impl eframe::App for App {
@@ -341,6 +545,8 @@ impl eframe::App for App {
 
         egui::CentralPanel::default().show_inside(ui, |ui| self.painel_canvas(ui));
 
+        self.handle_pending_file_result();
+        self.ron_dialog(ui.ctx());
         self.flush_state(frame);
     }
 
@@ -357,9 +563,11 @@ impl App {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.strong("Rede");
-            if ui.button("Recarregar do RON").clicked() {
-                self.load_network();
-                self.mark_network_dirty();
+            if ui.button("Importar").clicked() {
+                self.open_ron_dialog(RonKind::Network, RonMode::Import);
+            }
+            if ui.button("Exportar").clicked() {
+                self.open_ron_dialog(RonKind::Network, RonMode::Export);
             }
             if ui.button("Novo vazio").clicked() {
                 self.reset_empty_network();
@@ -378,27 +586,6 @@ impl App {
         ui.separator();
         ui.strong("Seleção");
         self.painel_edicao(ui);
-
-        ui.separator();
-        egui::CollapsingHeader::new("Texto RON")
-            .default_open(false)
-            .show(ui, |ui| {
-                if ui.button("Exportar do grafo").clicked()
-                    && let Ok(text) = self.network_document_to_ron()
-                {
-                    self.net_ron = text;
-                }
-                egui::ScrollArea::both()
-                    .id_salt("scroll_rede")
-                    .show(ui, |ui| {
-                        ui.add(
-                            egui::TextEdit::multiline(&mut self.net_ron)
-                                .code_editor()
-                                .desired_width(f32::INFINITY)
-                                .desired_rows(20),
-                        );
-                    });
-            });
     }
 
     fn reset_empty_network(&mut self) {
@@ -840,6 +1027,14 @@ impl App {
         ui.separator();
         ui.horizontal(|ui| {
             ui.strong("Eventos");
+            if ui.button("Importar").clicked() {
+                self.open_ron_dialog(RonKind::Scenario, RonMode::Import);
+            }
+            if ui.button("Exportar").clicked() {
+                self.open_ron_dialog(RonKind::Scenario, RonMode::Export);
+            }
+        });
+        ui.horizontal(|ui| {
             if ui.button("+ adicionar").clicked() {
                 self.scenario.events.push(Event {
                     at_min: 0.0,
@@ -906,30 +1101,6 @@ impl App {
         if scenario_changed {
             self.mark_scenario_dirty();
         }
-
-        ui.separator();
-        egui::CollapsingHeader::new("Texto RON")
-            .default_open(false)
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    if ui.button("Recarregar do RON").clicked() {
-                        self.load_scenario_from_ron();
-                    }
-                    if ui.button("Exportar").clicked() {
-                        self.scenario_ron = engine::scenario_to_ron(&self.scenario);
-                    }
-                });
-                egui::ScrollArea::both()
-                    .id_salt("scroll_cenario")
-                    .show(ui, |ui| {
-                        ui.add(
-                            egui::TextEdit::multiline(&mut self.scenario_ron)
-                                .code_editor()
-                                .desired_width(f32::INFINITY)
-                                .desired_rows(12),
-                        );
-                    });
-            });
     }
 
     /// Caixa de resultados DEC/FEC (ou erro) da última simulação.
@@ -982,6 +1153,147 @@ fn load_network_document(text: &str) -> Result<NetworkDocument, String> {
 fn network_document_to_ron(doc: &NetworkDocument) -> Result<String, ron::Error> {
     let cfg = ron::ser::PrettyConfig::default();
     ron::ser::to_string_pretty(doc, cfg)
+}
+
+fn dialog_title(kind: RonKind, mode: RonMode) -> &'static str {
+    match (kind, mode) {
+        (RonKind::Network, RonMode::Import) => "Importar rede",
+        (RonKind::Network, RonMode::Export) => "Exportar rede",
+        (RonKind::Scenario, RonMode::Import) => "Importar eventos",
+        (RonKind::Scenario, RonMode::Export) => "Exportar eventos",
+    }
+}
+
+fn default_file_name(kind: RonKind) -> &'static str {
+    match kind {
+        RonKind::Network => "rede-layout.ron",
+        RonKind::Scenario => "eventos.ron",
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn pick_ron_file(kind: RonKind, pending: PendingFileResult, ctx: egui::Context) {
+    let Some(path) = rfd::FileDialog::new()
+        .add_filter("RON", &["ron"])
+        .pick_file()
+    else {
+        return;
+    };
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("arquivo.ron")
+        .to_string();
+    let result = match std::fs::read_to_string(&path) {
+        Ok(text) => FileResult::Uploaded { kind, text, name },
+        Err(e) => FileResult::Error {
+            kind,
+            message: format!("erro ao ler arquivo: {e}"),
+        },
+    };
+    *pending.borrow_mut() = Some(result);
+    ctx.request_repaint();
+}
+
+#[cfg(target_arch = "wasm32")]
+fn pick_ron_file(kind: RonKind, pending: PendingFileResult, ctx: egui::Context) {
+    wasm_bindgen_futures::spawn_local(async move {
+        let Some(file) = rfd::AsyncFileDialog::new()
+            .add_filter("RON", &["ron"])
+            .pick_file()
+            .await
+        else {
+            return;
+        };
+        let name = file.file_name();
+        let result = match String::from_utf8(file.read().await) {
+            Ok(text) => FileResult::Uploaded { kind, text, name },
+            Err(e) => FileResult::Error {
+                kind,
+                message: format!("arquivo não é UTF-8 válido: {e}"),
+            },
+        };
+        *pending.borrow_mut() = Some(result);
+        ctx.request_repaint();
+    });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn save_ron_file(kind: RonKind, text: String, pending: PendingFileResult, ctx: egui::Context) {
+    let path = match std::env::current_dir() {
+        Ok(dir) => dir.join(default_file_name(kind)),
+        Err(e) => {
+            *pending.borrow_mut() = Some(FileResult::Error {
+                kind,
+                message: format!("erro ao localizar diretório atual: {e}"),
+            });
+            ctx.request_repaint();
+            return;
+        }
+    };
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(default_file_name(kind))
+        .to_string();
+    let result = match std::fs::write(&path, text) {
+        Ok(()) => FileResult::Downloaded { kind, name },
+        Err(e) => FileResult::Error {
+            kind,
+            message: format!("erro ao salvar arquivo: {e}"),
+        },
+    };
+    *pending.borrow_mut() = Some(result);
+    ctx.request_repaint();
+}
+
+#[cfg(target_arch = "wasm32")]
+fn save_ron_file(kind: RonKind, text: String, pending: PendingFileResult, ctx: egui::Context) {
+    let name = default_file_name(kind).to_string();
+    let result = match download_ron_file(&name, &text) {
+        Ok(()) => FileResult::Downloaded { kind, name },
+        Err(e) => FileResult::Error { kind, message: e },
+    };
+    *pending.borrow_mut() = Some(result);
+    ctx.request_repaint();
+}
+
+#[cfg(target_arch = "wasm32")]
+fn download_ron_file(name: &str, text: &str) -> Result<(), String> {
+    use eframe::wasm_bindgen::{JsCast as _, JsValue};
+
+    let window = web_sys::window().ok_or_else(|| "sem objeto window".to_string())?;
+    let document = window
+        .document()
+        .ok_or_else(|| "sem objeto document".to_string())?;
+    let body = document
+        .body()
+        .ok_or_else(|| "documento sem body".to_string())?;
+
+    let parts = js_sys::Array::new();
+    parts.push(&JsValue::from_str(text));
+    let options = web_sys::BlobPropertyBag::new();
+    options.set_type("text/plain;charset=utf-8");
+    let blob = web_sys::Blob::new_with_str_sequence_and_options(&parts, &options)
+        .map_err(|e| format!("erro ao montar arquivo: {e:?}"))?;
+    let url = web_sys::Url::create_object_url_with_blob(&blob)
+        .map_err(|e| format!("erro ao criar download: {e:?}"))?;
+
+    let anchor = document
+        .create_element("a")
+        .map_err(|e| format!("erro ao criar link de download: {e:?}"))?
+        .dyn_into::<web_sys::HtmlAnchorElement>()
+        .map_err(|_| "elemento de download inválido".to_string())?;
+    anchor.set_href(&url);
+    anchor.set_download(name);
+    body.append_child(&anchor)
+        .map_err(|e| format!("erro ao anexar link de download: {e:?}"))?;
+    anchor.click();
+    body.remove_child(&anchor)
+        .map_err(|e| format!("erro ao remover link de download: {e:?}"))?;
+    web_sys::Url::revoke_object_url(&url)
+        .map_err(|e| format!("erro ao liberar download: {e:?}"))?;
+    Ok(())
 }
 
 fn network_summary(net: &Network) -> String {
