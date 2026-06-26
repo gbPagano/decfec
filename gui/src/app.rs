@@ -454,18 +454,6 @@ impl App {
                 }
                 ui.label("Ramo");
 
-                let mut id_buf = b.id.clone().unwrap_or_default();
-                if ui
-                    .horizontal(|ui| {
-                        ui.label("id:");
-                        ui.text_edit_singleline(&mut id_buf)
-                    })
-                    .inner
-                    .changed()
-                {
-                    b.id = (!id_buf.trim().is_empty()).then_some(id_buf);
-                }
-
                 let nodes_buf = &mut self
                     .branch_nodes_editor
                     .as_mut()

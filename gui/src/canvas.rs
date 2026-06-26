@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use egui::{Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2};
 
-use decfec::topology::{Branch, BusKind, Element, Network, State};
+use decfec::topology::{BusKind, Element, Network, State};
 
 /// Espaçamento entre camadas (eixo X) e entre nós de uma camada (eixo Y), em
 /// coordenadas-mundo.
@@ -19,6 +19,8 @@ const DY: f32 = 80.0;
 const NODE_R: f32 = 7.0;
 /// Tolerância de clique (px) para nós e arestas.
 const HIT_SLOP: f32 = 6.0;
+/// Distância do rótulo do ramo até a linha desenhada, em pixels de tela.
+const EDGE_LABEL_OFFSET: f32 = 14.0;
 
 /// O que está selecionado no canvas.
 #[derive(Clone, PartialEq)]
@@ -219,7 +221,8 @@ fn paint(
             .iter()
             .map(|&p| to_screen(center, pan, zoom, p))
             .collect();
-        let label_pos = midpoint(&screen_points);
+        let branch_center = midpoint(&screen_points);
+        let label_pos = edge_label_pos(&screen_points);
         let (mut cor, mut largura, tracejada) = edge_style(&b.element);
         if st.selection == Some(Selection::Branch(i)) {
             cor = Color32::from_rgb(250, 240, 120);
@@ -237,14 +240,14 @@ fn paint(
             );
         } else {
             for &p in &screen_points {
-                paint_segment(painter, label_pos, p, largura, cor, tracejada);
+                paint_segment(painter, branch_center, p, largura, cor, tracejada);
             }
         }
 
         painter.text(
             label_pos,
             egui::Align2::CENTER_CENTER,
-            edge_label(b),
+            edge_label(&b.element),
             FontId::proportional(11.0),
             cor,
         );
@@ -300,6 +303,37 @@ fn to_world(center: Pos2, pan: Vec2, zoom: f32, s: Pos2) -> Pos2 {
 fn midpoint(points: &[Pos2]) -> Pos2 {
     let sum = points.iter().fold(Vec2::ZERO, |acc, p| acc + p.to_vec2());
     (sum / points.len() as f32).to_pos2()
+}
+
+/// Posição do rótulo do ramo fora da linha, preferindo acima ou ao lado.
+fn edge_label_pos(points: &[Pos2]) -> Pos2 {
+    let center = midpoint(points);
+    let dirs = [
+        Vec2::new(0.0, -1.0),
+        Vec2::new(1.0, 0.0),
+        Vec2::new(-1.0, 0.0),
+        Vec2::new(1.0, -1.0).normalized(),
+        Vec2::new(-1.0, -1.0).normalized(),
+    ];
+
+    dirs.into_iter()
+        .map(|dir| center + dir * EDGE_LABEL_OFFSET)
+        .max_by(|a, b| {
+            distance_to_branch(*a, points, center)
+                .total_cmp(&distance_to_branch(*b, points, center))
+        })
+        .unwrap_or(center)
+}
+
+fn distance_to_branch(p: Pos2, points: &[Pos2], center: Pos2) -> f32 {
+    if points.len() == 2 {
+        return dist_to_segment(p, points[0], points[1]);
+    }
+
+    points
+        .iter()
+        .map(|&endpoint| dist_to_segment(p, center, endpoint))
+        .fold(f32::INFINITY, f32::min)
 }
 
 fn paint_segment(
@@ -421,13 +455,10 @@ fn edge_style(el: &Element) -> (Color32, f32, bool) {
     }
 }
 
-/// Rótulo de uma aresta: id da chave, ou "id (Nc)" para linhas com carga.
-fn edge_label(b: &Branch) -> String {
-    match b.element {
-        Element::Line { consumers } if consumers > 0 => {
-            format!("{} ({}c)", b.label(), consumers)
-        }
-        _ => b.label(),
+/// Rótulo de uma aresta: apenas a quantidade de consumidores do ramo.
+fn edge_label(el: &Element) -> String {
+    match el {
+        Element::Line { consumers } => consumers.to_string(),
     }
 }
 
