@@ -845,9 +845,6 @@ impl App {
             .show(ui, |ui| {
                 for (i, ev) in self.scenario.events.iter_mut().enumerate() {
                     ui.horizontal(|ui| {
-                        if ui.small_button("✕").clicked() {
-                            remover = Some(i);
-                        }
                         ui.add(
                             egui::DragValue::new(&mut ev.at_min)
                                 .suffix(" min")
@@ -871,6 +868,9 @@ impl App {
                                     ui.selectable_value(&mut ev.action, a, action_label(a));
                                 }
                             });
+                        if ui.small_button("X").clicked() {
+                            remover = Some(i);
+                        }
                     });
                 }
             });
