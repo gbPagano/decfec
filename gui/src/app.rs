@@ -112,7 +112,7 @@ impl App {
         }
         // Rede mudou: reenquadra, limpa seleção e invalida o resultado anterior.
         self.canvas.request_fit();
-        self.canvas.selection = None;
+        self.canvas.clear_selection();
         self.report = None;
         self.branch_nodes_editor = None;
         self.bus_id_editor = None;
@@ -328,7 +328,7 @@ impl App {
         self.net = Some(net);
         self.positions.clear();
         self.canvas.request_fit();
-        self.canvas.selection = None;
+        self.canvas.clear_selection();
         self.branch_nodes_editor = None;
         self.bus_id_editor = None;
         self.hidden_bus_labels.clear();
@@ -341,10 +341,16 @@ impl App {
     /// Edita a rede em memória diretamente (que passa a ser a fonte da verdade
     /// após manobras gráficas); o texto RON só é reimportado via "Recarregar".
     fn painel_edicao(&mut self, ui: &mut egui::Ui) {
-        let Some(sel) = self.canvas.selection.clone() else {
+        let selections = self.canvas.selections.clone();
+        let Some(sel) = selections.first().cloned() else {
             ui.weak("Clique num nó ou ramo no grafo para editar.");
             return;
         };
+        if selections.len() > 1 {
+            ui.label(format!("{} itens selecionados", selections.len()));
+            ui.weak("Use + Ramo para conectar as barras selecionadas, ou Excluir seleção.");
+            return;
+        }
         let Some(net) = self.net.as_mut() else {
             return;
         };
@@ -409,7 +415,7 @@ impl App {
                             event.bus = new_id.clone();
                         }
                     }
-                    self.canvas.selection = Some(Selection::Bus(new_id.clone()));
+                    self.canvas.set_selection(Selection::Bus(new_id.clone()));
                     self.bus_id_editor = Some((new_id.clone(), new_id));
                     self.report = None;
                     return self.revalidate();
@@ -538,7 +544,7 @@ impl App {
             {
                 self.add_branch();
             }
-            let tem_sel = self.canvas.selection.is_some();
+            let tem_sel = !self.canvas.selections.is_empty();
             if ui
                 .add_enabled(tem_sel, egui::Button::new("Excluir seleção"))
                 .clicked()
@@ -561,6 +567,14 @@ impl App {
             &mut self.canvas,
             &self.hidden_bus_labels,
         );
+
+        let delete_pressed = ui.input(|i| i.key_pressed(egui::Key::Delete));
+        if delete_pressed
+            && !ui.ctx().egui_wants_keyboard_input()
+            && !self.canvas.selections.is_empty()
+        {
+            self.delete_selection();
+        }
     }
 
     /// Recalcula o layout automático e reenquadra (útil após importar/editar).
@@ -583,51 +597,84 @@ impl App {
             kind: BusKind::Junction,
         });
         self.positions.insert(id.clone(), pos);
-        self.canvas.selection = Some(Selection::Bus(id));
+        self.canvas.set_selection(Selection::Bus(id));
         self.revalidate();
     }
 
-    /// Adiciona um ramo entre os dois primeiros barramentos (editável depois).
+    /// Adiciona um ramo entre as barras selecionadas, ou entre as duas últimas.
     fn add_branch(&mut self) {
+        let selected_nodes: Vec<String> = self
+            .canvas
+            .selections
+            .iter()
+            .filter_map(|sel| match sel {
+                Selection::Bus(id) => Some(id.clone()),
+                Selection::Branch(_) => None,
+            })
+            .collect();
         let Some(net) = self.net.as_mut() else {
             return;
         };
-        if net.buses.len() < 2 {
+        let nodes = if selected_nodes.len() >= 2 {
+            selected_nodes
+        } else if net.buses.len() >= 2 {
+            net.buses[net.buses.len() - 2..]
+                .iter()
+                .map(|b| b.id.clone())
+                .collect()
+        } else {
             return;
-        }
-        let from = net.buses[0].id.clone();
-        let to = net.buses[1].id.clone();
+        };
         let id = unique_id(net.branches.iter().filter_map(|b| b.id.as_deref()), "ramo");
         net.branches.push(Branch {
             id: Some(id),
-            nodes: vec![from, to],
+            nodes,
             element: Element::Line { consumers: 0 },
         });
-        self.canvas.selection = Some(Selection::Branch(net.branches.len() - 1));
+        self.canvas
+            .set_selection(Selection::Branch(net.branches.len() - 1));
         self.branch_nodes_editor = None;
         self.bus_id_editor = None;
         self.revalidate();
     }
 
-    /// Exclui a seleção: um ramo, ou uma barra (em cascata com seus ramos).
+    /// Exclui a seleção: ramos e/ou barras (em cascata com seus ramos).
     fn delete_selection(&mut self) {
-        let Some(sel) = self.canvas.selection.take() else {
+        let selections = std::mem::take(&mut self.canvas.selections);
+        if selections.is_empty() {
             return;
         };
         let Some(net) = self.net.as_mut() else {
             return;
         };
-        match sel {
-            Selection::Bus(id) => {
-                net.buses.retain(|b| b.id != id);
-                net.branches.retain(|b| !b.nodes.iter().any(|n| n == &id));
-                self.positions.remove(&id);
-                self.hidden_bus_labels.remove(&id);
-            }
-            Selection::Branch(i) => {
-                if i < net.branches.len() {
-                    net.branches.remove(i);
-                }
+        let buses_to_remove: HashSet<String> = selections
+            .iter()
+            .filter_map(|sel| match sel {
+                Selection::Bus(id) => Some(id.clone()),
+                Selection::Branch(_) => None,
+            })
+            .collect();
+        let branches_to_remove: HashSet<usize> = selections
+            .iter()
+            .filter_map(|sel| match sel {
+                Selection::Branch(i) => Some(*i),
+                Selection::Bus(_) => None,
+            })
+            .collect();
+
+        net.buses.retain(|b| !buses_to_remove.contains(&b.id));
+        let mut branch_idx = 0;
+        net.branches.retain(|b| {
+            let remove = branches_to_remove.contains(&branch_idx)
+                || b.nodes.iter().any(|n| buses_to_remove.contains(n));
+            branch_idx += 1;
+            !remove
+        });
+        for id in buses_to_remove {
+            self.positions.remove(&id);
+            self.hidden_bus_labels.remove(&id);
+            if self.switch == id {
+                self.switch.clear();
             }
         }
         self.branch_nodes_editor = None;

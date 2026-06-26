@@ -29,7 +29,7 @@ const BUS_LABEL_OFFSET: f32 = 18.0;
 const LABEL_DIRECTION_SCORE_OFFSET: f32 = 1.0;
 
 /// O que está selecionado no canvas.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Selection {
     /// Um barramento, por id.
     Bus(String),
@@ -59,8 +59,8 @@ pub struct CanvasState {
     needs_fit: bool,
     /// O que o arrasto atual está movendo.
     drag: Drag,
-    /// Seleção atual (lida pelo painel de edição).
-    pub selection: Option<Selection>,
+    /// Seleções atuais (lidas pelo painel de edição).
+    pub selections: Vec<Selection>,
 }
 
 enum Drag {
@@ -76,7 +76,7 @@ impl Default for CanvasState {
             zoom: 1.0,
             needs_fit: true,
             drag: Drag::None,
-            selection: None,
+            selections: Vec::new(),
         }
     }
 }
@@ -85,6 +85,27 @@ impl CanvasState {
     /// Pede um reenquadramento (fit-to-view) no próximo desenho.
     pub fn request_fit(&mut self) {
         self.needs_fit = true;
+    }
+
+    pub fn set_selection(&mut self, selection: Selection) {
+        self.selections.clear();
+        self.selections.push(selection);
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.selections.clear();
+    }
+
+    fn is_selected(&self, selection: &Selection) -> bool {
+        self.selections.contains(selection)
+    }
+
+    fn toggle_selection(&mut self, selection: Selection) {
+        if let Some(i) = self.selections.iter().position(|sel| sel == &selection) {
+            self.selections.remove(i);
+        } else {
+            self.selections.push(selection);
+        }
     }
 }
 
@@ -181,7 +202,11 @@ pub fn draw(
     if resp.drag_started() {
         st.drag = match pointer.and_then(|p| node_at(positions, center, pan, zoom, p)) {
             Some(id) => {
-                st.selection = Some(Selection::Bus(id.clone()));
+                let selection = Selection::Bus(id.clone());
+                let ctrl = ui.input(|i| i.modifiers.ctrl);
+                if !ctrl && !st.is_selected(&selection) {
+                    st.set_selection(selection);
+                }
                 Drag::Node(id)
             }
             None => Drag::Pan,
@@ -205,9 +230,18 @@ pub fn draw(
     // Clique simples: seleciona nó, ou aresta, ou limpa.
     if resp.clicked() {
         let p = pointer.unwrap_or(center);
-        st.selection = node_at(positions, center, pan, zoom, p)
+        let selection = node_at(positions, center, pan, zoom, p)
             .map(Selection::Bus)
             .or_else(|| edge_at(net, positions, center, pan, zoom, p).map(Selection::Branch));
+        if ui.input(|i| i.modifiers.ctrl) {
+            if let Some(selection) = selection {
+                st.toggle_selection(selection);
+            }
+        } else if let Some(selection) = selection {
+            st.set_selection(selection);
+        } else {
+            st.clear_selection();
+        }
     }
 
     paint(
@@ -265,7 +299,7 @@ fn paint(
             points.iter().map(|&p| (world_branch_center, p)).collect()
         };
         let (mut cor, mut largura, tracejada) = edge_style(&b.element);
-        if st.selection == Some(Selection::Branch(i)) {
+        if st.is_selected(&Selection::Branch(i)) {
             cor = Color32::from_rgb(250, 240, 120);
             largura += 1.5;
         }
@@ -312,7 +346,7 @@ fn paint(
             ),
         };
         let mut largura = 1.5;
-        if st.selection == Some(Selection::Bus(bus.id.clone())) {
+        if st.is_selected(&Selection::Bus(bus.id.clone())) {
             contorno = Color32::from_rgb(250, 240, 120);
             largura = 3.0;
         }
