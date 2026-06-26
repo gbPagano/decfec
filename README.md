@@ -2,6 +2,8 @@
 
 Calculadora de indicadores DEC e FEC para redes genéricas de distribuição, com uma biblioteca Rust, uma CLI e uma interface gráfica em `egui`.
 
+Versão web: [decfec.gbpagano.dev](https://decfec.gbpagano.dev)
+
 O projeto modela a rede como um grafo de barramentos e ramos, simula eventos de falta/manobra/reparo ao longo do tempo e calcula os indicadores de continuidade
 a partir dos consumidores afetados.
 
@@ -40,6 +42,8 @@ cargo run -- networks/ref-exercise.ron dec-fec scenarios/item_a.ron 2
 ```
 
 ## GUI
+
+Web: [decfec.gbpagano.dev](https://decfec.gbpagano.dev)
 
 Aplicação nativa:
 
