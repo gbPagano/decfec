@@ -20,6 +20,7 @@ pub struct Report {
 }
 
 /// Parseia e **valida** a rede a partir do texto RON.
+#[cfg(test)]
 pub fn load_network(ron: &str) -> Result<Network, String> {
     let net = Network::from_ron(ron).map_err(|e| format!("erro de parse na rede: {e}"))?;
     net.validate().map_err(|e| e.to_string())?;
@@ -27,6 +28,7 @@ pub fn load_network(ron: &str) -> Result<Network, String> {
 }
 
 /// Serializa a rede em RON legível (export do grafo para texto).
+#[cfg(test)]
 pub fn network_to_ron(net: &Network) -> String {
     to_ron(net)
 }

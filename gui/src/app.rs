@@ -18,10 +18,15 @@ const LAYOUT_PADRAO: &str = include_str!("../default-layout.ron");
 const NETWORK_KEY: &str = "decfec.network.ron.v1";
 const SCENARIO_KEY: &str = "decfec.scenario.ron.v1";
 const SELECTED_SET_KEY: &str = "decfec.selected_set.v1";
-const CANVAS_POSITIONS_KEY: &str = "decfec.canvas.positions.v1";
-const HIDDEN_BUS_LABELS_KEY: &str = "decfec.canvas.hidden_bus_labels.v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct NetworkDocument {
+    network: Network,
+    #[serde(default)]
+    layout: SavedCanvasPositions,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct SavedCanvasPositions {
     positions: Vec<SavedNodePosition>,
     #[serde(default)]
@@ -35,22 +40,15 @@ struct SavedNodePosition {
     y: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SavedHiddenBusLabels {
-    ids: Vec<String>,
-}
-
 /// Aplicação egui.
 ///
 /// Nesta etapa o fluxo é dirigido por texto RON (rede + cenário). O editor de
 /// grafo em canvas entra nas próximas etapas, mas já reaproveitará `net`.
 pub struct App {
-    /// Texto RON da rede (editável).
+    /// Texto RON da rede + layout do canvas (editável).
     net_ron: String,
     /// Texto RON do cenário de faltas (para importar/recarregar).
     scenario_ron: String,
-    /// Texto RON do layout do canvas (posições dos nós).
-    layout_ron: String,
     /// Cenário em memória (fonte da verdade para o editor de eventos).
     scenario: Scenario,
     /// Chave para o conjunto a jusante; vazio = sistema inteiro.
@@ -66,8 +64,6 @@ pub struct App {
     net_status: Result<String, String>,
     /// Resultado da última simulação.
     report: Option<Result<Report, String>>,
-    /// Mensagem do último import/export de layout.
-    layout_status: Option<Result<String, String>>,
     /// Texto em edição para os terminais do ramo selecionado.
     branch_nodes_editor: Option<(usize, String)>,
     /// Texto em edição para o id da barra selecionada.
@@ -88,9 +84,8 @@ impl App {
     /// Constrói a aplicação a partir do contexto de criação do eframe.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let mut app = Self {
-            net_ron: REDE_PADRAO.to_string(),
+            net_ron: default_network_document_ron(),
             scenario_ron: CENARIO_PADRAO.to_string(),
-            layout_ron: LAYOUT_PADRAO.to_string(),
             scenario: engine::load_scenario(CENARIO_PADRAO)
                 .unwrap_or_else(|_| Scenario { events: Vec::new() }),
             switch: "2".to_string(),
@@ -99,7 +94,6 @@ impl App {
             canvas: CanvasState::default(),
             net_status: Ok(String::new()),
             report: None,
-            layout_status: None,
             branch_nodes_editor: None,
             bus_id_editor: None,
             hidden_bus_labels: HashSet::new(),
@@ -118,25 +112,17 @@ impl App {
         if !restored_network {
             app.load_network();
         }
-        let restored_layout = cc
-            .storage
-            .is_some_and(|storage| app.restore_canvas_positions(storage));
-        if !restored_network && !restored_layout {
-            let _ = app.apply_canvas_layout(LAYOUT_PADRAO);
-        }
-        if let Some(storage) = cc.storage {
-            app.restore_hidden_bus_labels(storage);
-        }
         app
     }
 
     /// (Re)carrega a rede a partir do texto RON, atualizando `net`/`net_status`.
     fn load_network(&mut self) {
-        match engine::load_network(&self.net_ron) {
-            Ok(net) => {
-                self.net_status = Ok(network_summary(&net));
-                self.positions = canvas::layout(&net);
-                self.net = Some(net);
+        match load_network_document(&self.net_ron) {
+            Ok(doc) => {
+                self.net_status = Ok(network_summary(&doc.network));
+                self.positions = canvas::layout(&doc.network);
+                self.net = Some(doc.network);
+                self.apply_saved_canvas_layout(doc.layout);
             }
             Err(e) => {
                 self.net = None;
@@ -178,20 +164,21 @@ impl App {
         let Some(text) = storage.get_string(NETWORK_KEY) else {
             return false;
         };
-        let Ok(net) = Network::from_ron(&text) else {
+        let Ok(doc) = load_network_document(&text) else {
             return false;
         };
 
         self.net_ron = text;
-        self.positions = canvas::layout(&net);
-        self.net = Some(net);
+        self.positions = canvas::layout(&doc.network);
+        self.net = Some(doc.network);
+        self.apply_saved_canvas_layout(doc.layout);
         self.revalidate();
         true
     }
 
     fn save_network(&self, storage: &mut dyn eframe::Storage) {
-        if let Some(net) = &self.net {
-            storage.set_string(NETWORK_KEY, engine::network_to_ron(net));
+        if let Ok(text) = self.network_document_to_ron() {
+            storage.set_string(NETWORK_KEY, text);
         }
     }
 
@@ -228,9 +215,10 @@ impl App {
             return;
         }
         if let Some(storage) = frame.storage_mut() {
-            if self.network_dirty {
+            if self.network_dirty || self.hidden_bus_labels_dirty {
                 self.save_network(storage);
                 self.network_dirty = false;
+                self.hidden_bus_labels_dirty = false;
             }
             if self.scenario_dirty {
                 self.save_scenario(storage);
@@ -240,24 +228,7 @@ impl App {
                 self.save_selected_set(storage);
                 self.selected_set_dirty = false;
             }
-            if self.hidden_bus_labels_dirty {
-                self.save_hidden_bus_labels(storage);
-                self.hidden_bus_labels_dirty = false;
-            }
         }
-    }
-
-    fn restore_canvas_positions(&mut self, storage: &dyn eframe::Storage) -> bool {
-        let Some(saved) = storage.get_string(CANVAS_POSITIONS_KEY) else {
-            return false;
-        };
-        self.apply_canvas_layout(&saved).is_ok()
-    }
-
-    fn apply_canvas_layout(&mut self, text: &str) -> Result<usize, ron::error::SpannedError> {
-        let saved = ron::from_str::<SavedCanvasPositions>(text)?;
-        let applied = self.apply_saved_canvas_layout(saved);
-        Ok(applied)
     }
 
     fn apply_saved_canvas_layout(&mut self, saved: SavedCanvasPositions) -> usize {
@@ -272,34 +243,6 @@ impl App {
         }
         self.apply_hidden_bus_labels(saved.hidden_bus_labels);
         applied
-    }
-
-    fn save_canvas_positions(&self, storage: &mut dyn eframe::Storage) {
-        if let Ok(text) = self.canvas_positions_to_ron() {
-            storage.set_string(CANVAS_POSITIONS_KEY, text);
-        }
-    }
-
-    fn restore_hidden_bus_labels(&mut self, storage: &dyn eframe::Storage) {
-        let Some(saved) = storage.get_string(HIDDEN_BUS_LABELS_KEY) else {
-            return;
-        };
-        let Ok(saved) = ron::from_str::<SavedHiddenBusLabels>(&saved) else {
-            return;
-        };
-
-        self.hidden_bus_labels = saved.ids.into_iter().collect();
-        self.retain_hidden_labels_for_loaded_network();
-        self.hidden_bus_labels_dirty = false;
-    }
-
-    fn save_hidden_bus_labels(&self, storage: &mut dyn eframe::Storage) {
-        let mut ids: Vec<String> = self.hidden_bus_labels.iter().cloned().collect();
-        ids.sort();
-        let cfg = ron::ser::PrettyConfig::default();
-        if let Ok(text) = ron::ser::to_string_pretty(&SavedHiddenBusLabels { ids }, cfg) {
-            storage.set_string(HIDDEN_BUS_LABELS_KEY, text);
-        }
     }
 
     fn retain_hidden_labels_for_loaded_network(&mut self) {
@@ -346,7 +289,7 @@ impl App {
         }
     }
 
-    fn canvas_positions_to_ron(&self) -> Result<String, ron::Error> {
+    fn saved_canvas_positions(&self) -> SavedCanvasPositions {
         let mut positions: Vec<SavedNodePosition> = self
             .positions
             .iter()
@@ -358,40 +301,23 @@ impl App {
             .collect();
         positions.sort_by(|a, b| a.id.cmp(&b.id));
 
-        let cfg = ron::ser::PrettyConfig::default();
         let mut hidden_bus_labels: Vec<String> = self.hidden_bus_labels.iter().cloned().collect();
         hidden_bus_labels.sort();
 
-        ron::ser::to_string_pretty(
-            &SavedCanvasPositions {
-                positions,
-                hidden_bus_labels,
-            },
-            cfg,
-        )
-    }
-
-    fn export_canvas_layout(&mut self) {
-        match self.canvas_positions_to_ron() {
-            Ok(text) => {
-                self.layout_ron = text;
-                self.layout_status =
-                    Some(Ok(format!("{} posições exportadas", self.positions.len())));
-            }
-            Err(e) => self.layout_status = Some(Err(format!("erro ao exportar layout: {e}"))),
+        SavedCanvasPositions {
+            positions,
+            hidden_bus_labels,
         }
     }
 
-    fn import_canvas_layout(&mut self) {
-        let applied = match self.apply_canvas_layout(&self.layout_ron.clone()) {
-            Ok(applied) => applied,
-            Err(e) => {
-                self.layout_status = Some(Err(format!("erro de parse no layout: {e}")));
-                return;
-            }
+    fn network_document_to_ron(&self) -> Result<String, ron::Error> {
+        let Some(net) = &self.net else {
+            return Ok(self.net_ron.clone());
         };
-        self.canvas.request_fit();
-        self.layout_status = Some(Ok(format!("{applied} posições aplicadas")));
+        network_document_to_ron(&NetworkDocument {
+            network: net.clone(),
+            layout: self.saved_canvas_positions(),
+        })
     }
 }
 
@@ -422,8 +348,6 @@ impl eframe::App for App {
         self.save_network(storage);
         self.save_scenario(storage);
         self.save_selected_set(storage);
-        self.save_canvas_positions(storage);
-        self.save_hidden_bus_labels(storage);
     }
 }
 
@@ -460,9 +384,9 @@ impl App {
             .default_open(false)
             .show(ui, |ui| {
                 if ui.button("Exportar do grafo").clicked()
-                    && let Some(net) = &self.net
+                    && let Ok(text) = self.network_document_to_ron()
                 {
-                    self.net_ron = engine::network_to_ron(net);
+                    self.net_ron = text;
                 }
                 egui::ScrollArea::both()
                     .id_salt("scroll_rede")
@@ -475,36 +399,6 @@ impl App {
                         );
                     });
             });
-
-        ui.separator();
-        egui::CollapsingHeader::new("Layout do canvas")
-            .default_open(false)
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    if ui.button("Exportar layout").clicked() {
-                        self.export_canvas_layout();
-                    }
-                    if ui.button("Recarregar layout").clicked() {
-                        self.import_canvas_layout();
-                    }
-                });
-                if let Some(status) = &self.layout_status {
-                    match status {
-                        Ok(msg) => ui.colored_label(egui::Color32::from_rgb(120, 200, 120), msg),
-                        Err(e) => ui.colored_label(egui::Color32::from_rgb(230, 120, 120), e),
-                    };
-                }
-                egui::ScrollArea::both()
-                    .id_salt("scroll_layout")
-                    .show(ui, |ui| {
-                        ui.add(
-                            egui::TextEdit::multiline(&mut self.layout_ron)
-                                .code_editor()
-                                .desired_width(f32::INFINITY)
-                                .desired_rows(10),
-                        );
-                    });
-            });
     }
 
     fn reset_empty_network(&mut self) {
@@ -512,7 +406,6 @@ impl App {
             buses: Vec::new(),
             branches: Vec::new(),
         };
-        self.net_ron = engine::network_to_ron(&net);
         self.net = Some(net);
         self.positions.clear();
         self.canvas.request_fit();
@@ -525,6 +418,9 @@ impl App {
         }
         self.report = None;
         self.net_status = Ok("canvas vazio".to_string());
+        if let Ok(text) = self.network_document_to_ron() {
+            self.net_ron = text;
+        }
         self.mark_network_dirty();
     }
 
@@ -1068,6 +964,26 @@ fn unique_id<'a>(existing: impl Iterator<Item = &'a str>, prefixo: &str) -> Stri
         .expect("sequência infinita sempre acha um id livre")
 }
 
+fn default_network_document_ron() -> String {
+    let network = Network::from_ron(REDE_PADRAO).expect("rede padrão deve carregar");
+    let layout =
+        ron::from_str::<SavedCanvasPositions>(LAYOUT_PADRAO).expect("layout padrão deve carregar");
+    network_document_to_ron(&NetworkDocument { network, layout })
+        .expect("documento padrão deve serializar")
+}
+
+fn load_network_document(text: &str) -> Result<NetworkDocument, String> {
+    let doc = ron::from_str::<NetworkDocument>(text)
+        .map_err(|e| format!("erro de parse na rede/layout: {e}"))?;
+    doc.network.validate().map_err(|e| e.to_string())?;
+    Ok(doc)
+}
+
+fn network_document_to_ron(doc: &NetworkDocument) -> Result<String, ron::Error> {
+    let cfg = ron::ser::PrettyConfig::default();
+    ron::ser::to_string_pretty(doc, cfg)
+}
+
 fn network_summary(net: &Network) -> String {
     format!(
         "{} Subestações, {} Chaves, Cc total = {}",
@@ -1092,5 +1008,19 @@ fn action_label(a: Action) -> &'static str {
         Action::Repair => "Reparo",
         Action::Open => "Abrir",
         Action::Close => "Fechar",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn documento_de_rede_aceita_layout_omitido() {
+        let doc = load_network_document(&format!("(network: {REDE_PADRAO})"))
+            .expect("layout deve ser opcional");
+
+        assert!(!doc.network.buses.is_empty());
+        assert!(doc.layout.positions.is_empty());
     }
 }
