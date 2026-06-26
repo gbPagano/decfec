@@ -134,12 +134,7 @@ impl App {
     fn load_network(&mut self) {
         match engine::load_network(&self.net_ron) {
             Ok(net) => {
-                self.net_status = Ok(format!(
-                    "{} barramentos, {} ramos, Cc total = {}",
-                    net.buses.len(),
-                    net.branches.len(),
-                    net.total_consumers()
-                ));
+                self.net_status = Ok(network_summary(&net));
                 self.positions = canvas::layout(&net);
                 self.net = Some(net);
             }
@@ -404,7 +399,7 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         egui::Panel::top("titulo").show_inside(ui, |ui| {
             ui.add_space(4.0);
-            ui.heading("decfec — editor de redes e falhas");
+            ui.heading("DEC/FEC: Calculadora de Indicadores");
             ui.add_space(4.0);
         });
 
@@ -448,14 +443,11 @@ impl App {
         });
         match &self.net_status {
             Ok(resumo) if !resumo.is_empty() => {
-                ui.colored_label(
-                    egui::Color32::from_rgb(120, 200, 120),
-                    format!("✓ {resumo}"),
-                );
+                ui.colored_label(egui::Color32::from_rgb(120, 200, 120), resumo);
             }
             Ok(_) => {}
             Err(e) => {
-                ui.colored_label(egui::Color32::from_rgb(230, 120, 120), format!("✗ {e}"));
+                ui.colored_label(egui::Color32::from_rgb(230, 120, 120), e);
             }
         }
 
@@ -736,12 +728,7 @@ impl App {
     fn revalidate(&mut self) {
         if let Some(net) = &self.net {
             self.net_status = match net.validate() {
-                Ok(()) => Ok(format!(
-                    "{} barramentos, {} ramos, Cc total = {}",
-                    net.buses.len(),
-                    net.branches.len(),
-                    net.total_consumers()
-                )),
+                Ok(()) => Ok(network_summary(net)),
                 Err(e) => Err(e.to_string()),
             };
         }
@@ -815,7 +802,7 @@ impl App {
         let Some(net) = self.net.as_mut() else {
             return;
         };
-        let id = unique_id(net.buses.iter().map(|b| b.id.as_str()), "barra");
+        let id = unique_id(net.buses.iter().map(|b| b.id.as_str()), "b");
         net.buses.push(Bus {
             id: id.clone(),
             kind: BusKind::Junction,
@@ -975,9 +962,10 @@ impl App {
 
         let mut remover: Option<usize> = None;
         let mut scenario_changed = false;
+        let eventos_max_height = (ui.available_height() - 48.0).max(120.0);
         egui::ScrollArea::vertical()
             .id_salt("scroll_eventos")
-            .max_height(280.0)
+            .max_height(eventos_max_height)
             .show(ui, |ui| {
                 for (i, ev) in self.scenario.events.iter_mut().enumerate() {
                     ui.horizontal(|ui| {
@@ -1056,7 +1044,7 @@ impl App {
         ui.separator();
         match report {
             Ok(r) => {
-                ui.label(format!("Conjunto: {} — Cc = {} consumidores", r.alvo, r.cc));
+                ui.label(format!("Conjunto: {} - Cc = {} consumidores", r.alvo, r.cc));
                 ui.horizontal(|ui| {
                     ui.heading(format!("DEC = {:.3} h", r.ind.dec_h));
                     ui.add_space(16.0);
@@ -1065,7 +1053,7 @@ impl App {
                 ui.weak(format!("({:.1} min)", r.ind.dec_h * 60.0));
             }
             Err(e) => {
-                ui.colored_label(egui::Color32::from_rgb(230, 120, 120), format!("✗ {e}"));
+                ui.colored_label(egui::Color32::from_rgb(230, 120, 120), e);
             }
         }
     }
@@ -1090,6 +1078,15 @@ fn unique_id<'a>(existing: impl Iterator<Item = &'a str>, prefixo: &str) -> Stri
         .map(|n| format!("{prefixo}{n}"))
         .find(|id| !usados.contains(id.as_str()))
         .expect("sequência infinita sempre acha um id livre")
+}
+
+fn network_summary(net: &Network) -> String {
+    format!(
+        "{} Subestações, {} Chaves, Cc total = {}",
+        net.sources().len(),
+        net.switches().len(),
+        net.total_consumers()
+    )
 }
 
 fn parse_branch_nodes(text: &str) -> Vec<String> {
