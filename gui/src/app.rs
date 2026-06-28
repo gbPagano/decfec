@@ -22,6 +22,7 @@ const LAYOUT_PADRAO: &str = include_str!("../default-layout.ron");
 const NETWORK_KEY: &str = "decfec.network.ron.v1";
 const SCENARIO_KEY: &str = "decfec.scenario.ron.v1";
 const SELECTED_SET_KEY: &str = "decfec.selected_set.v1";
+const UNDO_HISTORY_LIMIT: usize = 100;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct NetworkDocument {
@@ -93,6 +94,16 @@ struct CopiedBus {
     pos: Pos2,
 }
 
+#[derive(Clone)]
+struct UndoSnapshot {
+    net: Network,
+    positions: HashMap<String, Pos2>,
+    selections: Vec<Selection>,
+    hidden_bus_labels: HashSet<String>,
+    switch: String,
+    scenario: Scenario,
+}
+
 /// Aplicação egui.
 ///
 /// Nesta etapa o fluxo é dirigido por texto RON (rede + cenário). O editor de
@@ -141,6 +152,12 @@ pub struct App {
     pending_file_result: PendingFileResult,
     /// Clipboard interno para Ctrl+C/Ctrl+V no grafo.
     graph_clipboard: Option<GraphClipboard>,
+    /// Histórico de estados da rede/canvas para Ctrl+Z.
+    undo_stack: Vec<UndoSnapshot>,
+    /// Histórico de estados desfeitos para Ctrl+Shift+Z.
+    redo_stack: Vec<UndoSnapshot>,
+    /// Evita gravar um snapshot por frame durante o mesmo arrasto de barras.
+    canvas_drag_undo_active: bool,
 }
 
 impl App {
@@ -169,6 +186,9 @@ impl App {
             help_center_on_open: false,
             pending_file_result: Rc::new(RefCell::new(None)),
             graph_clipboard: None,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            canvas_drag_undo_active: false,
         };
         let restored_network = cc
             .storage
@@ -204,6 +224,9 @@ impl App {
         self.report = None;
         self.branch_nodes_editor = None;
         self.bus_id_editor = None;
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+        self.canvas_drag_undo_active = false;
         self.retain_hidden_labels_for_loaded_network();
     }
 
@@ -327,6 +350,63 @@ impl App {
 
     fn mark_selected_set_dirty(&mut self) {
         self.selected_set_dirty = true;
+    }
+
+    fn undo_snapshot(&self) -> Option<UndoSnapshot> {
+        self.net.as_ref().map(|net| UndoSnapshot {
+            net: net.clone(),
+            positions: self.positions.clone(),
+            selections: self.canvas.selections.clone(),
+            hidden_bus_labels: self.hidden_bus_labels.clone(),
+            switch: self.switch.clone(),
+            scenario: self.scenario.clone(),
+        })
+    }
+
+    fn push_undo(&mut self) {
+        if let Some(snapshot) = self.undo_snapshot() {
+            push_edit_undo_snapshot(&mut self.undo_stack, &mut self.redo_stack, snapshot);
+        }
+    }
+
+    fn undo(&mut self) {
+        let Some(snapshot) = self.undo_stack.pop() else {
+            return;
+        };
+        if let Some(current) = self.undo_snapshot() {
+            push_undo_snapshot(&mut self.redo_stack, current);
+        }
+
+        self.restore_undo_snapshot(snapshot);
+    }
+
+    fn redo(&mut self) {
+        let Some(snapshot) = self.redo_stack.pop() else {
+            return;
+        };
+        if let Some(current) = self.undo_snapshot() {
+            push_undo_snapshot(&mut self.undo_stack, current);
+        }
+
+        self.restore_undo_snapshot(snapshot);
+    }
+
+    fn restore_undo_snapshot(&mut self, snapshot: UndoSnapshot) {
+        self.net = Some(snapshot.net);
+        self.positions = snapshot.positions;
+        self.canvas.selections = snapshot.selections;
+        self.hidden_bus_labels = snapshot.hidden_bus_labels;
+        self.switch = snapshot.switch;
+        self.scenario = snapshot.scenario;
+        self.branch_nodes_editor = None;
+        self.bus_id_editor = None;
+        self.report = None;
+        self.canvas_drag_undo_active = false;
+        self.mark_network_dirty();
+        self.mark_hidden_bus_labels_dirty();
+        self.mark_scenario_dirty();
+        self.mark_selected_set_dirty();
+        self.revalidate();
     }
 
     fn apply_hidden_bus_labels(&mut self, ids: Vec<String>) {
@@ -502,6 +582,8 @@ impl App {
                             "- Segure Ctrl enquanto clica para selecionar várias barras ou alternar itens na seleção.",
                         );
                         ui.label("- Use Ctrl+C e Ctrl+V para copiar e colar a seleção no grafo.");
+                        ui.label("- Use Ctrl+Z para desfazer a última edição da rede/canvas.");
+                        ui.label("- Use Ctrl+Shift+Z para refazer uma edição desfeita.");
                         ui.label("- Use Delete ou Excluir seleção para remover itens selecionados.");
                         ui.label(
                             "- Para esconder o label de uma barra, selecione a barra e desmarque Exibir label no grafo.",
@@ -582,6 +664,7 @@ impl App {
             }
             RonKind::Scenario => match engine::load_scenario(&text) {
                 Ok(scenario) => {
+                    self.push_undo();
                     self.scenario = scenario;
                     self.scenario_ron = text;
                     self.report = None;
@@ -714,6 +797,7 @@ impl App {
     }
 
     fn reset_empty_network(&mut self) {
+        self.push_undo();
         let net = Network {
             buses: Vec::new(),
             branches: Vec::new(),
@@ -751,6 +835,8 @@ impl App {
             ui.weak("Use + Ramo para conectar as barras selecionadas, ou Excluir seleção.");
             return;
         }
+        let undo_before_edit = self.undo_snapshot();
+        let mut undo_pushed = false;
         let Some(net) = self.net.as_mut() else {
             return;
         };
@@ -806,6 +892,12 @@ impl App {
                 }
 
                 if let Some(new_id) = rename_to {
+                    push_undo_once(
+                        &mut self.undo_stack,
+                        &mut self.redo_stack,
+                        &undo_before_edit,
+                        &mut undo_pushed,
+                    );
                     let old_id = id.clone();
                     net.buses[bus_idx].id = new_id.clone();
                     for branch in &mut net.branches {
@@ -845,10 +937,22 @@ impl App {
                 {
                     if show_label {
                         if self.hidden_bus_labels.remove(&id) {
+                            push_undo_once(
+                                &mut self.undo_stack,
+                                &mut self.redo_stack,
+                                &undo_before_edit,
+                                &mut undo_pushed,
+                            );
                             self.hidden_bus_labels_dirty = true;
                         }
                     } else {
                         if self.hidden_bus_labels.insert(id.clone()) {
+                            push_undo_once(
+                                &mut self.undo_stack,
+                                &mut self.redo_stack,
+                                &undo_before_edit,
+                                &mut undo_pushed,
+                            );
                             self.hidden_bus_labels_dirty = true;
                         }
                     }
@@ -862,6 +966,12 @@ impl App {
                         .selectable_label(bus.kind == BusKind::Substation, "Subestação")
                         .clicked()
                     {
+                        push_undo_once(
+                            &mut self.undo_stack,
+                            &mut self.redo_stack,
+                            &undo_before_edit,
+                            &mut undo_pushed,
+                        );
                         bus.kind = BusKind::Substation;
                         changed = true;
                     }
@@ -869,6 +979,12 @@ impl App {
                         .selectable_label(bus.kind == BusKind::Junction, "Junção")
                         .clicked()
                     {
+                        push_undo_once(
+                            &mut self.undo_stack,
+                            &mut self.redo_stack,
+                            &undo_before_edit,
+                            &mut undo_pushed,
+                        );
                         bus.kind = BusKind::Junction;
                         changed = true;
                     }
@@ -877,6 +993,12 @@ impl App {
                         .clicked()
                         && !matches!(bus.kind, BusKind::Switch { .. })
                     {
+                        push_undo_once(
+                            &mut self.undo_stack,
+                            &mut self.redo_stack,
+                            &undo_before_edit,
+                            &mut undo_pushed,
+                        );
                         bus.kind = BusKind::Switch {
                             normal: State::Closed,
                         };
@@ -886,12 +1008,30 @@ impl App {
                 if let BusKind::Switch { normal } = &mut bus.kind {
                     ui.horizontal(|ui| {
                         ui.label("Normal:");
-                        changed |= ui
+                        if ui
                             .radio_value(normal, State::Closed, "NF (fechada)")
-                            .changed();
-                        changed |= ui
+                            .changed()
+                        {
+                            push_undo_once(
+                                &mut self.undo_stack,
+                                &mut self.redo_stack,
+                                &undo_before_edit,
+                                &mut undo_pushed,
+                            );
+                            changed = true;
+                        }
+                        if ui
                             .radio_value(normal, State::Open, "NA / tie (aberta)")
-                            .changed();
+                            .changed()
+                        {
+                            push_undo_once(
+                                &mut self.undo_stack,
+                                &mut self.redo_stack,
+                                &undo_before_edit,
+                                &mut undo_pushed,
+                            );
+                            changed = true;
+                        }
                     });
                 }
                 if changed {
@@ -925,6 +1065,12 @@ impl App {
                     .inner
                     .changed()
                 {
+                    push_undo_once(
+                        &mut self.undo_stack,
+                        &mut self.redo_stack,
+                        &undo_before_edit,
+                        &mut undo_pushed,
+                    );
                     b.nodes = parse_branch_nodes(nodes_buf);
                     self.network_dirty = true;
                 }
@@ -935,6 +1081,12 @@ impl App {
                             .add(egui::DragValue::new(consumers).prefix("consumidores: "))
                             .changed()
                         {
+                            push_undo_once(
+                                &mut self.undo_stack,
+                                &mut self.redo_stack,
+                                &undo_before_edit,
+                                &mut undo_pushed,
+                            );
                             self.network_dirty = true;
                         }
                     }
@@ -993,15 +1145,41 @@ impl App {
             });
             return;
         };
-        canvas::draw(
+        let undo_before_canvas = self.undo_snapshot();
+        let canvas_edit = canvas::draw(
             ui,
             net,
             &mut self.positions,
             &mut self.canvas,
             &self.hidden_bus_labels,
         );
+        if canvas_edit.positions_changed && !self.canvas_drag_undo_active {
+            if let Some(snapshot) = undo_before_canvas {
+                push_edit_undo_snapshot(&mut self.undo_stack, &mut self.redo_stack, snapshot);
+            }
+            self.canvas_drag_undo_active = true;
+            self.report = None;
+            self.mark_network_dirty();
+        }
+        if canvas_edit.drag_stopped {
+            self.canvas_drag_undo_active = false;
+        }
 
         if !ui.ctx().egui_wants_keyboard_input() {
+            let redo_pressed =
+                ui.input(|i| i.modifiers.ctrl && i.modifiers.shift && i.key_pressed(egui::Key::Z));
+            if redo_pressed {
+                self.redo();
+                return;
+            }
+
+            let undo_pressed =
+                ui.input(|i| i.modifiers.ctrl && !i.modifiers.shift && i.key_pressed(egui::Key::Z));
+            if undo_pressed {
+                self.undo();
+                return;
+            }
+
             let copy_pressed = ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::C));
             if copy_pressed {
                 self.copy_selection();
@@ -1021,18 +1199,27 @@ impl App {
 
     /// Recalcula o layout automático e reenquadra (útil após importar/editar).
     fn relayout(&mut self) {
+        if self.net.is_some() {
+            self.push_undo();
+        }
         if let Some(net) = &self.net {
             self.positions = canvas::layout(net);
             self.canvas.request_fit();
+            self.report = None;
+            self.mark_network_dirty();
         }
     }
 
     /// Adiciona um barramento novo (junção) perto do centro da vista e o seleciona.
     fn add_bus(&mut self) {
         let pos = self.canvas.insertion_pos();
+        let undo_before = self.undo_snapshot();
         let Some(net) = self.net.as_mut() else {
             return;
         };
+        if let Some(snapshot) = undo_before {
+            push_edit_undo_snapshot(&mut self.undo_stack, &mut self.redo_stack, snapshot);
+        }
         let id = unique_id(net.buses.iter().map(|b| b.id.as_str()), "b");
         net.buses.push(Bus {
             id: id.clone(),
@@ -1046,6 +1233,7 @@ impl App {
 
     /// Adiciona um ramo entre as barras selecionadas, ou entre as duas últimas.
     fn add_branch(&mut self) {
+        let undo_before = self.undo_snapshot();
         let selected_nodes: Vec<String> = self
             .canvas
             .selections
@@ -1068,6 +1256,9 @@ impl App {
         } else {
             return;
         };
+        if let Some(snapshot) = undo_before {
+            push_edit_undo_snapshot(&mut self.undo_stack, &mut self.redo_stack, snapshot);
+        }
         let id = unique_id(net.branches.iter().filter_map(|b| b.id.as_deref()), "ramo");
         net.branches.push(Branch {
             id: Some(id),
@@ -1095,6 +1286,7 @@ impl App {
     }
 
     fn paste_selection(&mut self) {
+        let undo_before = self.undo_snapshot();
         let Some(net) = self.net.as_mut() else {
             return;
         };
@@ -1103,6 +1295,9 @@ impl App {
         };
 
         let paste_pos = self.canvas.paste_pos();
+        if let Some(snapshot) = undo_before {
+            push_edit_undo_snapshot(&mut self.undo_stack, &mut self.redo_stack, snapshot);
+        }
         let selections = paste_graph_clipboard(net, &mut self.positions, clipboard, paste_pos);
         if selections.is_empty() {
             return;
@@ -1118,6 +1313,7 @@ impl App {
 
     /// Exclui a seleção: ramos e/ou barras (em cascata com seus ramos).
     fn delete_selection(&mut self) {
+        let undo_before = self.undo_snapshot();
         let selections = std::mem::take(&mut self.canvas.selections);
         if selections.is_empty() {
             return;
@@ -1125,6 +1321,9 @@ impl App {
         let Some(net) = self.net.as_mut() else {
             return;
         };
+        if let Some(snapshot) = undo_before {
+            push_edit_undo_snapshot(&mut self.undo_stack, &mut self.redo_stack, snapshot);
+        }
         let buses_to_remove: HashSet<String> = selections
             .iter()
             .filter_map(|sel| match sel {
@@ -1179,6 +1378,8 @@ impl App {
             .flat_map(|n| n.buses.iter())
             .map(|b| b.id.clone())
             .collect();
+        let undo_before_cenario = self.undo_snapshot();
+        let mut undo_pushed = false;
 
         ui.add_space(4.0);
         ui.horizontal(|ui| {
@@ -1197,6 +1398,12 @@ impl App {
                     }
                 });
             if conjunto_resp.response.changed() {
+                push_undo_once(
+                    &mut self.undo_stack,
+                    &mut self.redo_stack,
+                    &undo_before_cenario,
+                    &mut undo_pushed,
+                );
                 self.mark_selected_set_dirty();
             }
             if ui.button("▶ Simular").clicked() {
@@ -1223,12 +1430,24 @@ impl App {
                     bus: bus_ids.first().cloned().unwrap_or_default(),
                     action: Action::Fault,
                 });
+                push_undo_once(
+                    &mut self.undo_stack,
+                    &mut self.redo_stack,
+                    &undo_before_cenario,
+                    &mut undo_pushed,
+                );
                 self.mark_scenario_dirty();
             }
             if ui.button("ordenar por tempo").clicked() {
                 self.scenario
                     .events
                     .sort_by(|a, b| a.at_min.total_cmp(&b.at_min));
+                push_undo_once(
+                    &mut self.undo_stack,
+                    &mut self.redo_stack,
+                    &undo_before_cenario,
+                    &mut undo_pushed,
+                );
                 self.mark_scenario_dirty();
             }
         });
@@ -1281,6 +1500,12 @@ impl App {
             scenario_changed = true;
         }
         if scenario_changed {
+            push_undo_once(
+                &mut self.undo_stack,
+                &mut self.redo_stack,
+                &undo_before_cenario,
+                &mut undo_pushed,
+            );
             self.mark_scenario_dirty();
         }
     }
@@ -1315,6 +1540,37 @@ fn unique_id<'a>(existing: impl Iterator<Item = &'a str>, prefixo: &str) -> Stri
         .map(|n| format!("{prefixo}{n}"))
         .find(|id| !usados.contains(id.as_str()))
         .expect("sequência infinita sempre acha um id livre")
+}
+
+fn push_undo_snapshot(stack: &mut Vec<UndoSnapshot>, snapshot: UndoSnapshot) {
+    if stack.len() == UNDO_HISTORY_LIMIT {
+        stack.remove(0);
+    }
+    stack.push(snapshot);
+}
+
+fn push_edit_undo_snapshot(
+    undo_stack: &mut Vec<UndoSnapshot>,
+    redo_stack: &mut Vec<UndoSnapshot>,
+    snapshot: UndoSnapshot,
+) {
+    push_undo_snapshot(undo_stack, snapshot);
+    redo_stack.clear();
+}
+
+fn push_undo_once(
+    undo_stack: &mut Vec<UndoSnapshot>,
+    redo_stack: &mut Vec<UndoSnapshot>,
+    snapshot: &Option<UndoSnapshot>,
+    pushed: &mut bool,
+) {
+    if *pushed {
+        return;
+    }
+    if let Some(snapshot) = snapshot.clone() {
+        push_edit_undo_snapshot(undo_stack, redo_stack, snapshot);
+        *pushed = true;
+    }
 }
 
 fn unique_suffixed_id(used: &HashSet<String>, base: &str) -> String {
@@ -1777,5 +2033,49 @@ mod tests {
 
         assert_eq!(clipboard.buses.len(), 2);
         assert_eq!(clipboard.branches.len(), 1);
+    }
+
+    #[test]
+    fn historico_de_undo_respeita_limite() {
+        let mut stack = Vec::new();
+        for i in 0..=UNDO_HISTORY_LIMIT {
+            push_undo_snapshot(&mut stack, snapshot_de_teste(i.to_string()));
+        }
+
+        assert_eq!(stack.len(), UNDO_HISTORY_LIMIT);
+        assert_eq!(stack.first().expect("tem primeiro").switch, "1");
+        assert_eq!(stack.last().expect("tem último").switch, "100");
+    }
+
+    #[test]
+    fn nova_edicao_limpa_historico_de_redo() {
+        let mut undo_stack = Vec::new();
+        let mut redo_stack = vec![snapshot_de_teste("redo".to_string())];
+
+        push_edit_undo_snapshot(
+            &mut undo_stack,
+            &mut redo_stack,
+            snapshot_de_teste("undo".to_string()),
+        );
+
+        assert_eq!(undo_stack.len(), 1);
+        assert!(redo_stack.is_empty());
+    }
+
+    fn snapshot_de_teste(switch: String) -> UndoSnapshot {
+        UndoSnapshot {
+            net: Network {
+                buses: vec![Bus {
+                    id: "s".to_string(),
+                    kind: BusKind::Substation,
+                }],
+                branches: Vec::new(),
+            },
+            positions: HashMap::new(),
+            selections: Vec::new(),
+            hidden_bus_labels: HashSet::new(),
+            switch,
+            scenario: Scenario { events: Vec::new() },
+        }
     }
 }

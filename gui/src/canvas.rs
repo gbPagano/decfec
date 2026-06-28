@@ -37,6 +37,12 @@ pub enum Selection {
     Branch(usize),
 }
 
+#[derive(Default)]
+pub struct CanvasEdit {
+    pub positions_changed: bool,
+    pub drag_stopped: bool,
+}
+
 struct BranchVisual {
     world_segments: Vec<(Pos2, Pos2)>,
     world_label_pos: Option<Pos2>,
@@ -186,7 +192,8 @@ pub fn draw(
     positions: &mut HashMap<String, Pos2>,
     st: &mut CanvasState,
     hidden_bus_labels: &HashSet<String>,
-) {
+) -> CanvasEdit {
+    let mut edit = CanvasEdit::default();
     let (resp, painter) = ui.allocate_painter(ui.available_size(), Sense::click_and_drag());
     let rect = resp.rect;
     let center = rect.center();
@@ -235,12 +242,13 @@ pub fn draw(
         match &st.drag {
             Drag::Pan => pan += resp.drag_delta(),
             Drag::Nodes { ids } => {
-                apply_node_drag(positions, ids, resp.drag_delta(), zoom);
+                edit.positions_changed |= apply_node_drag(positions, ids, resp.drag_delta(), zoom);
             }
             Drag::None => {}
         }
     }
     if resp.drag_stopped() {
+        edit.drag_stopped = true;
         st.drag = Drag::None;
     }
 
@@ -275,6 +283,7 @@ pub fn draw(
 
     st.pan = pan;
     st.zoom = zoom;
+    edit
 }
 
 /// Pinta arestas e nós com o estado de câmera/seleção já resolvido.
@@ -582,13 +591,19 @@ fn apply_node_drag(
     ids: &[String],
     screen_delta: Vec2,
     zoom: f32,
-) {
+) -> bool {
     let world_delta = screen_delta / zoom;
+    if world_delta.length_sq() == 0.0 {
+        return false;
+    }
+    let mut changed = false;
     for id in ids {
         if let Some(pos) = positions.get_mut(id) {
             *pos += world_delta;
+            changed = true;
         }
     }
+    changed
 }
 
 /// Distância de um ponto ao segmento `a`–`z`.
