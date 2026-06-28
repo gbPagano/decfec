@@ -7,10 +7,14 @@
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
-use decfec::fault::{Indicators, MOMENTARY_LIMIT_MIN, OutageInterval, Scenario};
+use decfec::fault::{
+    Indicators, IndividualIndicators, MOMENTARY_LIMIT_MIN, OutageInterval, Scenario,
+};
 use decfec::topology::Network;
 
-/// Resultado de um cálculo DEC/FEC sobre um conjunto de consumidores.
+pub const POINT_TARGET_PREFIX: &str = "bus:";
+
+/// Resultado de um cálculo de indicadores sobre um conjunto/ponto consumidor.
 pub struct Report {
     /// Descrição do conjunto (ex.: "a jusante da chave '1'" ou "sistema inteiro").
     pub alvo: String,
@@ -18,8 +22,16 @@ pub struct Report {
     pub cc: u32,
     /// Indicadores calculados.
     pub ind: Indicators,
+    /// Indicadores individuais, quando o alvo é um ponto consumidor.
+    pub individual: Option<IndividualReport>,
     /// Memória de cálculo por ramo do conjunto.
     pub lines: Vec<ReportLine>,
+}
+
+pub struct IndividualReport {
+    pub bus: String,
+    pub line_label: String,
+    pub ind: IndividualIndicators,
 }
 
 /// Parcela de cálculo de um ramo do conjunto selecionado.
@@ -59,14 +71,27 @@ pub fn load_scenario(ron: &str) -> Result<Scenario, String> {
     Scenario::from_ron(ron).map_err(|e| format!("erro de parse no cenário: {e}"))
 }
 
-/// Simula o cenário sobre a rede e calcula DEC/FEC.
+/// Simula o cenário sobre a rede e calcula indicadores.
 ///
-/// `switch`: vazio/`None` → sistema inteiro ([`Network::line_indices`]); caso
-/// contrário, o conjunto a jusante dessa chave ([`Network::downstream_lines`]).
-pub fn run(net: &Network, scenario: &Scenario, switch: Option<&str>) -> Result<Report, String> {
+/// `target`: vazio/`None` → sistema inteiro ([`Network::line_indices`]); id de
+/// chave → conjunto a jusante; `bus:<id>` → ponto consumidor individual.
+pub fn run(net: &Network, scenario: &Scenario, target: Option<&str>) -> Result<Report, String> {
     let res = scenario.simulate(net).map_err(|e| e.to_string())?;
 
-    let (conjunto, alvo): (BTreeSet<usize>, String) = match switch {
+    let mut individual = None;
+    let (conjunto, alvo): (BTreeSet<usize>, String) = match target {
+        Some(s) if s.starts_with(POINT_TARGET_PREFIX) => {
+            let bus = s[POINT_TARGET_PREFIX.len()..].trim();
+            let line = net.point_load_line(bus).map_err(|e| e.to_string())?;
+            let ind = res.individual_indicators_for_line(line);
+            let line_label = net.branches[line].label();
+            individual = Some(IndividualReport {
+                bus: bus.to_string(),
+                line_label: line_label.clone(),
+                ind,
+            });
+            (BTreeSet::from([line]), format!("ponto consumidor '{bus}'"))
+        }
         Some(s) if !s.is_empty() => match net.downstream_lines(s) {
             Some(set) => (set, format!("a jusante da chave '{s}'")),
             None => return Err(format!("chave '{s}' não encontrada")),
@@ -103,11 +128,16 @@ pub fn run(net: &Network, scenario: &Scenario, switch: Option<&str>) -> Result<R
         alvo,
         cc,
         ind,
+        individual,
         lines,
     })
 }
 
 pub fn calculation_preview_text(report: &Report) -> String {
+    if let Some(individual) = &report.individual {
+        return individual_calculation_preview_text(report, individual);
+    }
+
     let mut text = String::new();
     let (terms, discarded) = calculation_terms(report);
     writeln!(text, "Memória de cálculo DEC/FEC").unwrap();
@@ -170,6 +200,78 @@ pub fn calculation_preview_text(report: &Report) -> String {
         report.cc,
         &format!("{:.3}", report.ind.fec),
     );
+
+    text
+}
+
+fn individual_calculation_preview_text(report: &Report, individual: &IndividualReport) -> String {
+    let mut text = String::new();
+    let intervals = report
+        .lines
+        .iter()
+        .find(|line| line.label == individual.line_label)
+        .map(|line| line.counted.as_slice())
+        .unwrap_or(&[]);
+    let discarded = report
+        .lines
+        .iter()
+        .find(|line| line.label == individual.line_label)
+        .map(|line| line.discarded.as_slice())
+        .unwrap_or(&[]);
+
+    writeln!(text, "Memória de cálculo DIC/FIC/DMIC").unwrap();
+    writeln!(text).unwrap();
+    writeln!(text, "Ponto: {}", individual.bus).unwrap();
+    writeln!(text, "Conectado a: {}", individual.line_label).unwrap();
+    writeln!(text).unwrap();
+
+    writeln!(text, "Interrupções consideradas").unwrap();
+    if intervals.is_empty() {
+        writeln!(text, "nenhuma interrupção válida").unwrap();
+    } else {
+        for interval in intervals {
+            writeln!(
+                text,
+                "- início = {} min; duração = {} min",
+                fmt_num(interval.start_min),
+                fmt_num(interval.duration_min())
+            )
+            .unwrap();
+        }
+    }
+    if !discarded.is_empty() {
+        writeln!(text, "Descartadas: {} min", fmt_interval_list(discarded)).unwrap();
+    }
+    writeln!(text).unwrap();
+
+    let durations = intervals
+        .iter()
+        .map(|interval| fmt_num(interval.duration_min()))
+        .collect::<Vec<_>>();
+    let sum_expr = if durations.is_empty() {
+        "0".to_string()
+    } else {
+        join_preview_terms(&durations)
+    };
+    writeln!(
+        text,
+        "DIC = ({sum_expr}) / 60 = {:.3} h",
+        individual.ind.dic_h
+    )
+    .unwrap();
+    writeln!(text, "FIC = {} interrupções", individual.ind.fic).unwrap();
+    let dmic_expr = intervals
+        .iter()
+        .map(|interval| interval.duration_min())
+        .max_by(f64::total_cmp)
+        .map(fmt_num)
+        .unwrap_or_else(|| "0".to_string());
+    writeln!(
+        text,
+        "DMIC = {dmic_expr} / 60 = {:.3} h",
+        individual.ind.dmic_h
+    )
+    .unwrap();
 
     text
 }
@@ -322,5 +424,51 @@ mod tests {
         assert!(!text.contains("+ 0 ·"));
         assert!(!text.contains("\n0 ·"));
         assert!(!text.contains("Eventos simulados"));
+    }
+
+    #[test]
+    fn alvo_ponto_consumidor_retorna_indicadores_individuais() {
+        let net = load_network(
+            r#"
+            Network(
+                buses: [
+                    (id: "S", kind: Substation),
+                    (id: "br", kind: Switch(normal: Closed)),
+                    (id: "X", kind: Junction),
+                ],
+                branches: [
+                    (id: Some("feed"), nodes: ["S", "br"], element: Line(consumers: 0)),
+                    (id: Some("carga_x"), nodes: ["br", "X"], element: Line(consumers: 10)),
+                ],
+            )
+            "#,
+        )
+        .unwrap();
+        let scenario = load_scenario(
+            r#"
+            Scenario(events: [
+                (at_min: 0.0, bus: "br", action: Open),
+                (at_min: 30.0, bus: "br", action: Close),
+            ])
+            "#,
+        )
+        .unwrap();
+
+        let report = run(&net, &scenario, Some("bus:X")).unwrap();
+        let individual = report
+            .individual
+            .as_ref()
+            .expect("deve calcular DIC/FIC/DMIC");
+
+        assert_eq!(individual.bus, "X");
+        assert!((individual.ind.dic_h - 0.5).abs() < 1e-9);
+        assert_eq!(individual.ind.fic, 1);
+        assert!((individual.ind.dmic_h - 0.5).abs() < 1e-9);
+
+        let text = calculation_preview_text(&report);
+        assert!(text.contains("DIC ="));
+        assert!(text.contains("FIC ="));
+        assert!(text.contains("DMIC ="));
+        assert!(!text.contains("DEC ="));
     }
 }

@@ -19,10 +19,11 @@ fn main() -> ExitCode {
         None => summary(&path, &net),
         Some("downstream") => inspect_downstream(&net, args.next()),
         Some("dec-fec") => report_dec_fec(&net, args.next(), args.next()),
+        Some("dic-fic-dmic") => report_dic_fic_dmic(&net, args.next(), args.next()),
         Some(other) => {
             eprintln!("subcomando desconhecido: '{other}'");
             eprintln!(
-                "uso: decfec <rede.ron> [downstream <chave> | dec-fec <cenário.ron> [chave]]"
+                "uso: decfec <rede.ron> [downstream <chave> | dec-fec <cenário.ron> [chave] | dic-fic-dmic <cenário.ron> <barramento>]"
             );
             ExitCode::FAILURE
         }
@@ -90,19 +91,9 @@ fn report_dec_fec(
         return ExitCode::FAILURE;
     };
 
-    let text = match std::fs::read_to_string(&scenario_path) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("erro ao ler '{scenario_path}': {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-    let scenario = match Scenario::from_ron(&text) {
+    let scenario = match load_scenario(&scenario_path) {
         Ok(s) => s,
-        Err(e) => {
-            eprintln!("erro de parse em '{scenario_path}': {e}");
-            return ExitCode::FAILURE;
-        }
+        Err(code) => return code,
     };
 
     let res = match scenario.simulate(net) {
@@ -132,4 +123,65 @@ fn report_dec_fec(
     println!("  DEC = {:.3} h  ({:.1} min)", ind.dec_h, ind.dec_h * 60.0);
     println!("  FEC = {:.3} interrupções", ind.fec);
     ExitCode::SUCCESS
+}
+
+fn report_dic_fic_dmic(
+    net: &Network,
+    scenario_path: Option<String>,
+    bus: Option<String>,
+) -> ExitCode {
+    let Some(scenario_path) = scenario_path else {
+        eprintln!("uso: decfec <rede> dic-fic-dmic <cenário.ron> <barramento>");
+        return ExitCode::FAILURE;
+    };
+    let Some(bus) = bus else {
+        eprintln!("uso: decfec <rede> dic-fic-dmic <cenário.ron> <barramento>");
+        return ExitCode::FAILURE;
+    };
+
+    let scenario = match load_scenario(&scenario_path) {
+        Ok(s) => s,
+        Err(code) => return code,
+    };
+
+    let res = match scenario.simulate(net) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let line = match net.point_load_line(&bus) {
+        Ok(line) => line,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let ind = res.individual_indicators_for_line(line);
+
+    println!(
+        "Ponto consumidor: {bus} (ramo '{}')",
+        net.branches[line].label()
+    );
+    println!("  DIC = {:.3} h  ({:.1} min)", ind.dic_h, ind.dic_h * 60.0);
+    println!("  FIC = {:.3} interrupções", ind.fic as f64);
+    println!(
+        "  DMIC = {:.3} h  ({:.1} min)",
+        ind.dmic_h,
+        ind.dmic_h * 60.0
+    );
+    ExitCode::SUCCESS
+}
+
+fn load_scenario(path: &str) -> Result<Scenario, ExitCode> {
+    let text = std::fs::read_to_string(path).map_err(|e| {
+        eprintln!("erro ao ler '{path}': {e}");
+        ExitCode::FAILURE
+    })?;
+    Scenario::from_ron(&text).map_err(|e| {
+        eprintln!("erro de parse em '{path}': {e}");
+        ExitCode::FAILURE
+    })
 }

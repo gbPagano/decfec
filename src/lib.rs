@@ -1,4 +1,4 @@
-//! `decfec` — modelo e cálculo de DEC/FEC de redes de distribuição.
+//! `decfec` — modelo e cálculo de indicadores de continuidade de redes de distribuição.
 //!
 //! A biblioteca concentra o domínio (topologia da rede e, futuramente, motor de
 //! faltas e métricas), de modo que tanto o binário CLI quanto uma eventual

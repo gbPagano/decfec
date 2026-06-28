@@ -12,7 +12,7 @@ use egui::Pos2;
 use serde::{Deserialize, Serialize};
 
 use crate::canvas::{self, CanvasState, Selection};
-use crate::engine::{self, Report};
+use crate::engine::{self, POINT_TARGET_PREFIX, Report};
 
 /// Rede de referência usada como conteúdo inicial dos editores (embutida em
 /// tempo de compilação — funciona em WASM, sem filesystem).
@@ -118,7 +118,7 @@ pub struct App {
     scenario_ron: String,
     /// Cenário em memória (fonte da verdade para o editor de eventos).
     scenario: Scenario,
-    /// Chave para o conjunto a jusante; vazio = sistema inteiro.
+    /// Alvo da simulação: vazio = sistema inteiro, id = chave, `bus:<id>` = ponto.
     switch: String,
 
     /// Rede carregada e validada (ou `None` se o último parse falhou).
@@ -595,7 +595,7 @@ impl App {
                     .show(ui, |ui| {
                         ui.heading("Como usar o programa");
                         ui.label(
-                            "Monte ou importe uma rede, descreva os eventos do cenário e clique em Simular para calcular DEC/FEC do sistema inteiro ou de um conjunto a jusante.",
+                            "Monte ou importe uma rede, descreva os eventos do cenário e clique em Simular para calcular DEC/FEC do sistema inteiro, de um conjunto a jusante ou DIC/FIC/DMIC de um ponto consumidor.",
                         );
 
                         ui.separator();
@@ -635,7 +635,10 @@ impl App {
                         ui.add_space(6.0);
                         ui.strong("Cenário e simulação");
                         ui.label(
-                            "- No painel da direita, escolha Sistema inteiro ou um conjunto a jusante de uma chave.",
+                            "- No painel da direita, escolha Sistema inteiro, um conjunto a jusante de uma chave ou um ponto consumidor.",
+                        );
+                        ui.label(
+                            "- Pontos consumidores calculam indicadores individuais: DIC, FIC e DMIC.",
                         );
                         ui.label("- Adicione eventos com tempo em minutos, barra e ação.");
                         ui.label("- Fault cria a falta, Repair remove a falta, Open abre uma chave e Close fecha.");
@@ -666,7 +669,7 @@ impl App {
                             "- Se uma simulação der erro, confira ids duplicados, ramos sem nós válidos e eventos apontando para barras existentes.",
                         );
                         ui.label(
-                            "- Interrupções menores que 3 minutos são tratadas como momentâneas e não entram no DEC/FEC.",
+                            "- Interrupções menores que 3 minutos são tratadas como momentâneas e não entram nos indicadores.",
                         );
                     });
         });
@@ -955,6 +958,10 @@ impl App {
                     }
                     if self.switch == old_id {
                         self.switch = new_id.clone();
+                        self.mark_selected_set_dirty();
+                    } else if self.switch == point_target(&old_id) {
+                        self.switch = point_target(&new_id);
+                        self.mark_selected_set_dirty();
                     }
                     for event in &mut self.scenario.events {
                         if event.bus == old_id {
@@ -1411,7 +1418,7 @@ impl App {
             if self.hidden_bus_labels.remove(&id) {
                 self.mark_hidden_bus_labels_dirty();
             }
-            if self.switch == id {
+            if self.switch == id || self.switch == point_target(&id) {
                 self.switch.clear();
                 self.mark_selected_set_dirty();
             }
@@ -1437,23 +1444,40 @@ impl App {
             .flat_map(|n| n.buses.iter())
             .map(|b| b.id.clone())
             .collect();
+        let consumer_bus_ids: Vec<String> = self
+            .net
+            .iter()
+            .flat_map(|n| {
+                n.buses
+                    .iter()
+                    .filter(|b| n.point_load_line(&b.id).is_ok())
+                    .map(|b| b.id.clone())
+            })
+            .collect();
         let undo_before_cenario = self.undo_snapshot();
         let mut undo_pushed = false;
 
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.strong("Conjunto:");
-            let texto = if self.switch.is_empty() {
-                "Sistema inteiro".to_string()
-            } else {
-                format!("a jusante de {}", self.switch)
-            };
+            let texto = selected_target_label(&self.switch);
             let conjunto_resp = egui::ComboBox::from_id_salt("conjunto")
                 .selected_text(texto)
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut self.switch, String::new(), "Sistema inteiro");
+                    ui.separator();
                     for id in &switch_ids {
-                        ui.selectable_value(&mut self.switch, id.clone(), id);
+                        ui.selectable_value(&mut self.switch, id.clone(), format!("Chave {id}"));
+                    }
+                    if !consumer_bus_ids.is_empty() {
+                        ui.separator();
+                    }
+                    for id in &consumer_bus_ids {
+                        ui.selectable_value(
+                            &mut self.switch,
+                            point_target(id),
+                            format!("Ponto {id}"),
+                        );
                     }
                 });
             if conjunto_resp.response.changed() {
@@ -1569,7 +1593,7 @@ impl App {
         }
     }
 
-    /// Caixa de resultados DEC/FEC (ou erro) da última simulação.
+    /// Caixa de resultados dos indicadores (ou erro) da última simulação.
     fn painel_resultado(&mut self, ui: &mut egui::Ui) {
         let Some(report) = &self.report else {
             return;
@@ -1578,13 +1602,26 @@ impl App {
         let mut calculation_preview = None;
         match report {
             Ok(r) => {
-                ui.label(format!("Conjunto: {} - Cc = {} consumidores", r.alvo, r.cc));
-                ui.horizontal(|ui| {
-                    ui.heading(format!("DEC = {:.3} h", r.ind.dec_h));
-                    ui.add_space(16.0);
-                    ui.heading(format!("FEC = {:.3}", r.ind.fec));
-                });
-                ui.weak(format!("({:.1} min)", r.ind.dec_h * 60.0));
+                if let Some(individual) = &r.individual {
+                    ui.label(format!(
+                        "Ponto {} - conectado a {}",
+                        individual.bus, individual.line_label
+                    ));
+                    ui.horizontal(|ui| {
+                        ui.heading(format!("DIC = {:.3} h", individual.ind.dic_h));
+                        ui.add_space(16.0);
+                        ui.heading(format!("FIC = {:.3}", individual.ind.fic as f64));
+                    });
+                    ui.heading(format!("DMIC = {:.3} h", individual.ind.dmic_h));
+                } else {
+                    ui.label(format!("Conjunto: {} - Cc = {} consumidores", r.alvo, r.cc));
+                    ui.horizontal(|ui| {
+                        ui.heading(format!("DEC = {:.3} h", r.ind.dec_h));
+                        ui.add_space(16.0);
+                        ui.heading(format!("FEC = {:.3}", r.ind.fec));
+                    });
+                    ui.weak(format!("({:.1} min)", r.ind.dec_h * 60.0));
+                }
                 if ui.button("Ver memória de cálculo").clicked() {
                     calculation_preview = Some(engine::calculation_preview_text(r));
                 }
@@ -1613,6 +1650,20 @@ fn unique_id<'a>(existing: impl Iterator<Item = &'a str>, prefixo: &str) -> Stri
         .map(|n| format!("{prefixo}{n}"))
         .find(|id| !usados.contains(id.as_str()))
         .expect("sequência infinita sempre acha um id livre")
+}
+
+fn point_target(id: &str) -> String {
+    format!("{POINT_TARGET_PREFIX}{id}")
+}
+
+fn selected_target_label(target: &str) -> String {
+    if target.is_empty() {
+        "Sistema inteiro".to_string()
+    } else if let Some(bus) = target.strip_prefix(POINT_TARGET_PREFIX) {
+        format!("ponto {bus}")
+    } else {
+        format!("a jusante de {target}")
+    }
 }
 
 fn default_branch_id(net: &Network, nodes: &[String]) -> String {

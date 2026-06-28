@@ -1,6 +1,6 @@
 # DEC/FEC
 
-Calculadora de indicadores DEC e FEC para redes genéricas de distribuição, com uma biblioteca Rust, uma CLI e uma interface gráfica em `egui`.
+Calculadora de indicadores DEC/FEC e DIC/FIC/DMIC para redes genéricas de distribuição, com uma biblioteca Rust, uma CLI e uma interface gráfica em `egui`.
 
 Versão web: [decfec.gbpagano.dev](https://decfec.gbpagano.dev)
 
@@ -10,6 +10,7 @@ a partir dos consumidores afetados.
 ## Recursos
 
 - Cálculo de DEC e FEC por sistema inteiro ou por conjunto a jusante de uma chave.
+- Cálculo de DIC, FIC e DMIC para pontos consumidores conectados a ramos de carga.
 - Simulação por linha do tempo de eventos, sem informar manualmente quais consumidores foram afetados.
 - Entrada e saída em RON para rede, cenário e layout da GUI.
 - GUI com edição visual da rede, eventos, labels e layout.
@@ -41,6 +42,12 @@ DEC/FEC do conjunto a jusante de uma chave:
 cargo run -- networks/ref-exercise.ron dec-fec scenarios/item_a.ron 2
 ```
 
+DIC/FIC/DMIC de um ponto consumidor:
+
+```bash
+cargo run -- networks/ref-exercise.ron dic-fic-dmic scenarios/item_a.ron X
+```
+
 ## GUI
 
 Web: [decfec.gbpagano.dev](https://decfec.gbpagano.dev)
@@ -67,6 +74,7 @@ trunk build --release
 
 A GUI carrega uma rede, um cenário e um layout padrão. Alterações feitas pela interface são mantidas no storage da aplicação/navegador.
 A rede, o cenário e o layout também podem ser exportados em RON pelos painéis da interface.
+No painel de simulação, selecione um ponto consumidor para ver apenas os indicadores individuais DIC, FIC e DMIC.
 
 ## Formatos
 

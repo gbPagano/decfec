@@ -14,7 +14,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::topology::{BusKind, Network, State};
+use crate::topology::{BusKind, Network, PointLoadError, State};
 
 /// Limiar do PRODIST: interrupções com duração **< 3 min** são momentâneas e
 /// não entram nos indicadores.
@@ -79,6 +79,17 @@ pub struct Indicators {
     pub fec: f64,
 }
 
+/// Indicadores individuais de continuidade de uma unidade consumidora/bloco.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct IndividualIndicators {
+    /// DIC em **horas**: duração total das interrupções válidas.
+    pub dic_h: f64,
+    /// FIC: quantidade de interrupções válidas.
+    pub fic: u32,
+    /// DMIC em **horas**: maior interrupção contínua válida.
+    pub dmic_h: f64,
+}
+
 impl SimResult {
     /// Calcula DEC/FEC de um conjunto (índices de ramos-linha), aplicando o
     /// filtro dos 3 min (interrupções momentâneas são descartadas).
@@ -106,6 +117,47 @@ impl SimResult {
             dec_h: dec_num / 60.0 / cc as f64,
             fec: fec_num / cc as f64,
         }
+    }
+
+    /// Calcula DIC/FIC/DMIC para o ramo-linha informado, aplicando o filtro dos
+    /// 3 min (interrupções momentâneas são descartadas).
+    pub fn individual_indicators_for_line(&self, branch_idx: usize) -> IndividualIndicators {
+        let durations = self
+            .interruptions
+            .get(&branch_idx)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let counted = durations
+            .iter()
+            .copied()
+            .filter(|d| *d >= MOMENTARY_LIMIT_MIN);
+        let mut total_min = 0.0;
+        let mut max_min = 0.0;
+        let mut count = 0;
+        for duration in counted {
+            total_min += duration;
+            max_min = f64::max(max_min, duration);
+            count += 1;
+        }
+
+        IndividualIndicators {
+            dic_h: total_min / 60.0,
+            fic: count,
+            dmic_h: max_min / 60.0,
+        }
+    }
+
+    /// Calcula DIC/FIC/DMIC para o ponto consumidor indicado por um barramento.
+    ///
+    /// O barramento deve pertencer a exatamente um ramo-linha com consumidores;
+    /// isso modela um ponto de carga como `X` ou `Y` no diagrama.
+    pub fn individual_indicators_for_bus(
+        &self,
+        net: &Network,
+        bus: &str,
+    ) -> Result<IndividualIndicators, PointLoadError> {
+        let line = net.point_load_line(bus)?;
+        Ok(self.individual_indicators_for_line(line))
     }
 }
 

@@ -316,6 +316,34 @@ impl Network {
         lines.iter().map(|&i| self.branches[i].consumers()).sum()
     }
 
+    /// Ramo-linha com consumidores associado a um ponto consumidor (`bus_id`).
+    ///
+    /// O ponto deve existir e estar em exatamente um ramo com `consumers > 0`.
+    /// Se houver mais de um, o ponto é ambíguo e o chamador deve selecionar o
+    /// ramo diretamente.
+    pub fn point_load_line(&self, bus_id: &str) -> Result<usize, PointLoadError> {
+        if self.bus_index(bus_id).is_none() {
+            return Err(PointLoadError::UnknownBus(bus_id.to_string()));
+        }
+
+        let mut matches = self
+            .branches
+            .iter()
+            .enumerate()
+            .filter(|(_, branch)| {
+                branch.consumers() > 0 && branch.nodes.iter().any(|node| node == bus_id)
+            })
+            .map(|(i, _)| i);
+
+        let Some(first) = matches.next() else {
+            return Err(PointLoadError::NoConsumerLine(bus_id.to_string()));
+        };
+        if matches.next().is_some() {
+            return Err(PointLoadError::AmbiguousConsumerLine(bus_id.to_string()));
+        }
+        Ok(first)
+    }
+
     /// Barramentos energizados em uma configuração arbitrária.
     pub fn energized<FB, FN>(&self, conduz_branch: FB, conduz_node: FN) -> BTreeSet<&str>
     where
@@ -386,6 +414,32 @@ impl fmt::Display for TopologyError {
 }
 
 impl std::error::Error for TopologyError {}
+
+/// Problemas ao resolver um barramento como ponto consumidor individual.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PointLoadError {
+    UnknownBus(String),
+    NoConsumerLine(String),
+    AmbiguousConsumerLine(String),
+}
+
+impl fmt::Display for PointLoadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PointLoadError::UnknownBus(id) => write!(f, "barramento '{id}' não encontrado"),
+            PointLoadError::NoConsumerLine(id) => write!(
+                f,
+                "barramento '{id}' não pertence a nenhum ramo com consumidores"
+            ),
+            PointLoadError::AmbiguousConsumerLine(id) => write!(
+                f,
+                "barramento '{id}' pertence a mais de um ramo com consumidores"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for PointLoadError {}
 
 #[cfg(test)]
 mod tests {
