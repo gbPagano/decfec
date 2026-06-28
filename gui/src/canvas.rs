@@ -68,7 +68,7 @@ pub struct CanvasState {
 enum Drag {
     None,
     Pan,
-    Node(String),
+    Nodes { ids: Vec<String> },
 }
 
 impl Default for CanvasState {
@@ -215,7 +215,9 @@ pub fn draw(
                 if !ctrl && !st.is_selected(&selection) {
                     st.set_selection(selection);
                 }
-                Drag::Node(id)
+                Drag::Nodes {
+                    ids: drag_node_ids(&st.selections, &id),
+                }
             }
             None => Drag::Pan,
         };
@@ -223,10 +225,8 @@ pub fn draw(
     if resp.dragged() {
         match &st.drag {
             Drag::Pan => pan += resp.drag_delta(),
-            Drag::Node(id) => {
-                if let Some(w) = positions.get_mut(id) {
-                    *w += resp.drag_delta() / zoom;
-                }
+            Drag::Nodes { ids } => {
+                apply_node_drag(positions, ids, resp.drag_delta(), zoom);
             }
             Drag::None => {}
         }
@@ -552,6 +552,35 @@ fn edge_at(
         .map(|(i, _)| i)
 }
 
+fn drag_node_ids(selections: &[Selection], clicked_id: &str) -> Vec<String> {
+    let selected_ids: Vec<String> = selections
+        .iter()
+        .filter_map(|selection| match selection {
+            Selection::Bus(id) => Some(id.clone()),
+            Selection::Branch(_) => None,
+        })
+        .collect();
+    if selected_ids.iter().any(|id| id == clicked_id) {
+        selected_ids
+    } else {
+        vec![clicked_id.to_string()]
+    }
+}
+
+fn apply_node_drag(
+    positions: &mut HashMap<String, Pos2>,
+    ids: &[String],
+    screen_delta: Vec2,
+    zoom: f32,
+) {
+    let world_delta = screen_delta / zoom;
+    for id in ids {
+        if let Some(pos) = positions.get_mut(id) {
+            *pos += world_delta;
+        }
+    }
+}
+
 /// Distância de um ponto ao segmento `a`–`z`.
 fn dist_to_segment(p: Pos2, a: Pos2, z: Pos2) -> f32 {
     let az = z - a;
@@ -618,5 +647,43 @@ mod tests {
         for bus in &net.buses {
             assert!(pos.contains_key(&bus.id), "sem posição para '{}'", bus.id);
         }
+    }
+
+    #[test]
+    fn arrasto_de_no_selecionado_inclui_demais_barras_selecionadas() {
+        let selections = vec![
+            Selection::Bus("b1".to_string()),
+            Selection::Branch(0),
+            Selection::Bus("b2".to_string()),
+        ];
+
+        let ids = drag_node_ids(&selections, "b2");
+
+        assert_eq!(ids, vec!["b1".to_string(), "b2".to_string()]);
+    }
+
+    #[test]
+    fn arrasto_de_no_nao_selecionado_move_apenas_ele() {
+        let selections = vec![Selection::Bus("b1".to_string())];
+
+        let ids = drag_node_ids(&selections, "b3");
+
+        assert_eq!(ids, vec!["b3".to_string()]);
+    }
+
+    #[test]
+    fn aplica_arrasto_a_todas_as_barras_selecionadas() {
+        let mut positions = HashMap::from([
+            ("b1".to_string(), Pos2::new(0.0, 0.0)),
+            ("b2".to_string(), Pos2::new(10.0, 0.0)),
+            ("b3".to_string(), Pos2::new(20.0, 0.0)),
+        ]);
+        let ids = vec!["b1".to_string(), "b2".to_string()];
+
+        apply_node_drag(&mut positions, &ids, Vec2::new(6.0, 4.0), 2.0);
+
+        assert_eq!(positions["b1"], Pos2::new(3.0, 2.0));
+        assert_eq!(positions["b2"], Pos2::new(13.0, 2.0));
+        assert_eq!(positions["b3"], Pos2::new(20.0, 0.0));
     }
 }
