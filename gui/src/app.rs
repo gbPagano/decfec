@@ -1091,6 +1091,26 @@ impl App {
                 }
                 ui.label("Ramo");
 
+                let mut branch_id = b.id.clone().unwrap_or_default();
+                if ui
+                    .horizontal(|ui| {
+                        ui.label("id:");
+                        ui.text_edit_singleline(&mut branch_id)
+                    })
+                    .inner
+                    .changed()
+                {
+                    push_undo_once(
+                        &mut self.undo_stack,
+                        &mut self.redo_stack,
+                        &undo_before_edit,
+                        &mut undo_pushed,
+                    );
+                    let branch_id = branch_id.trim();
+                    b.id = (!branch_id.is_empty()).then(|| branch_id.to_string());
+                    self.network_dirty = true;
+                }
+
                 let nodes_buf = &mut self
                     .branch_nodes_editor
                     .as_mut()
@@ -1298,7 +1318,7 @@ impl App {
         if let Some(snapshot) = undo_before {
             push_edit_undo_snapshot(&mut self.undo_stack, &mut self.redo_stack, snapshot);
         }
-        let id = unique_id(net.branches.iter().filter_map(|b| b.id.as_deref()), "ramo");
+        let id = default_branch_id(net, &nodes);
         net.branches.push(Branch {
             id: Some(id),
             nodes,
@@ -1592,6 +1612,39 @@ fn unique_id<'a>(existing: impl Iterator<Item = &'a str>, prefixo: &str) -> Stri
     (1..)
         .map(|n| format!("{prefixo}{n}"))
         .find(|id| !usados.contains(id.as_str()))
+        .expect("sequência infinita sempre acha um id livre")
+}
+
+fn default_branch_id(net: &Network, nodes: &[String]) -> String {
+    let base = branch_id_base(nodes);
+    let mut used: HashSet<String> = net.buses.iter().map(|bus| bus.id.clone()).collect();
+    used.extend(net.branches.iter().filter_map(|branch| branch.id.clone()));
+    unique_numbered_id(&used, &base)
+}
+
+fn branch_id_base(nodes: &[String]) -> String {
+    if nodes.is_empty() {
+        return "ramo".to_string();
+    }
+
+    format!(
+        "ramo_{}",
+        nodes
+            .iter()
+            .map(|node| node.trim().replace(char::is_whitespace, "_"))
+            .collect::<Vec<_>>()
+            .join("_")
+    )
+}
+
+fn unique_numbered_id(used: &HashSet<String>, base: &str) -> String {
+    if !used.contains(base) {
+        return base.to_string();
+    }
+
+    (2..)
+        .map(|n| format!("{base}_{n}"))
+        .find(|id| !used.contains(id))
         .expect("sequência infinita sempre acha um id livre")
 }
 
@@ -1995,6 +2048,54 @@ mod tests {
         assert!(bus_id_already_exists(&net, "b2", "b1"));
         assert!(!bus_id_already_exists(&net, "b2", "b2"));
         assert!(!bus_id_already_exists(&net, "b2", "b3"));
+    }
+
+    #[test]
+    fn id_padrao_de_ramo_usa_barras_conectadas() {
+        let net = Network {
+            buses: vec![
+                Bus {
+                    id: "b1".to_string(),
+                    kind: BusKind::Junction,
+                },
+                Bus {
+                    id: "b2".to_string(),
+                    kind: BusKind::Junction,
+                },
+            ],
+            branches: Vec::new(),
+        };
+
+        assert_eq!(
+            default_branch_id(&net, &["b1".to_string(), "b2".to_string()]),
+            "ramo_b1_b2"
+        );
+    }
+
+    #[test]
+    fn id_padrao_de_ramo_recebe_sufixo_quando_colide() {
+        let net = Network {
+            buses: vec![
+                Bus {
+                    id: "b1".to_string(),
+                    kind: BusKind::Junction,
+                },
+                Bus {
+                    id: "b2".to_string(),
+                    kind: BusKind::Junction,
+                },
+            ],
+            branches: vec![Branch {
+                id: Some("ramo_b1_b2".to_string()),
+                nodes: vec!["b1".to_string(), "b2".to_string()],
+                element: Element::Line { consumers: 0 },
+            }],
+        };
+
+        assert_eq!(
+            default_branch_id(&net, &["b1".to_string(), "b2".to_string()]),
+            "ramo_b1_b2_2"
+        );
     }
 
     #[test]
