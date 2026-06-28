@@ -49,6 +49,7 @@ struct SavedNodePosition {
 enum RonKind {
     Network,
     Scenario,
+    Calculation,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -61,6 +62,8 @@ struct RonDialog {
     kind: RonKind,
     mode: RonMode,
     text: String,
+    preview: Option<String>,
+    center_on_open: bool,
     status: Option<Result<String, String>>,
 }
 
@@ -462,14 +465,30 @@ impl App {
                 .network_document_to_ron()
                 .unwrap_or_else(|_| self.net_ron.clone()),
             RonKind::Scenario => engine::scenario_to_ron(&self.scenario),
+            RonKind::Calculation => self
+                .report
+                .as_ref()
+                .and_then(|report| report.as_ref().ok())
+                .map(engine::calculation_preview_text)
+                .unwrap_or_default(),
         }
     }
 
     fn open_ron_dialog(&mut self, kind: RonKind, mode: RonMode) {
+        let preview = if kind == RonKind::Calculation && mode == RonMode::Export {
+            self.report
+                .as_ref()
+                .and_then(|report| report.as_ref().ok())
+                .map(engine::calculation_preview_text)
+        } else {
+            None
+        };
         self.ron_dialog = Some(RonDialog {
             kind,
             mode,
             text: self.ron_text(kind),
+            preview,
+            center_on_open: kind == RonKind::Calculation,
             status: None,
         });
     }
@@ -481,13 +500,17 @@ impl App {
 
         let mut open = true;
         let mut action = None;
-        egui::Window::new(dialog_title(dialog.kind, dialog.mode))
+        let mut window = egui::Window::new(dialog_title(dialog.kind, dialog.mode))
             .collapsible(false)
             .resizable(true)
             .default_width(680.0)
-            .default_height(520.0)
-            .open(&mut open)
-            .show(ctx, |ui| {
+            .default_height(520.0);
+        if dialog.center_on_open {
+            window = window.anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO);
+            dialog.center_on_open = false;
+        }
+        window.open(&mut open).show(ctx, |ui| {
+            if dialog.kind != RonKind::Calculation {
                 ui.horizontal(|ui| match dialog.mode {
                     RonMode::Import => {
                         if ui.button("Upload de arquivo").clicked() {
@@ -509,13 +532,26 @@ impl App {
                         }
                     }
                 });
-                if let Some(status) = &dialog.status {
-                    match status {
-                        Ok(msg) => ui.colored_label(egui::Color32::from_rgb(120, 200, 120), msg),
-                        Err(e) => ui.colored_label(egui::Color32::from_rgb(230, 120, 120), e),
-                    };
-                }
-                ui.add_space(4.0);
+            }
+            if let Some(status) = &dialog.status {
+                match status {
+                    Ok(msg) => ui.colored_label(egui::Color32::from_rgb(120, 200, 120), msg),
+                    Err(e) => ui.colored_label(egui::Color32::from_rgb(230, 120, 120), e),
+                };
+            }
+            ui.add_space(4.0);
+            if let Some(preview) = &dialog.preview {
+                egui::ScrollArea::both()
+                    .id_salt(("calculation_preview_scroll", dialog.kind, dialog.mode))
+                    .show(ui, |ui| {
+                        egui::Frame::group(ui.style()).show(ui, |ui| {
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(preview).monospace())
+                                    .selectable(true),
+                            );
+                        });
+                    });
+            } else {
                 egui::ScrollArea::both()
                     .id_salt(("ron_dialog_scroll", dialog.kind, dialog.mode))
                     .show(ui, |ui| {
@@ -526,7 +562,8 @@ impl App {
                                 .desired_rows(22),
                         );
                     });
-            });
+            }
+        });
 
         if !open {
             self.ron_dialog = None;
@@ -606,6 +643,7 @@ impl App {
                             "- Para transferir carga, normalmente use Open na chave de seccionamento e Close na chave NA/tie.",
                         );
                         ui.label("- Ordenar por tempo ajuda a revisar a sequência antes de simular.");
+                        ui.label("- Após simular, use Ver memória de cálculo para abrir a resolução com fórmulas.");
 
                         ui.add_space(6.0);
                         ui.strong("Importar e exportar");
@@ -676,6 +714,7 @@ impl App {
                     Err(e)
                 }
             },
+            RonKind::Calculation => Err("memória de cálculo é somente exportação".to_string()),
         }
     }
 
@@ -1511,11 +1550,12 @@ impl App {
     }
 
     /// Caixa de resultados DEC/FEC (ou erro) da última simulação.
-    fn painel_resultado(&self, ui: &mut egui::Ui) {
+    fn painel_resultado(&mut self, ui: &mut egui::Ui) {
         let Some(report) = &self.report else {
             return;
         };
         ui.separator();
+        let mut calculation_preview = None;
         match report {
             Ok(r) => {
                 ui.label(format!("Conjunto: {} - Cc = {} consumidores", r.alvo, r.cc));
@@ -1525,10 +1565,23 @@ impl App {
                     ui.heading(format!("FEC = {:.3}", r.ind.fec));
                 });
                 ui.weak(format!("({:.1} min)", r.ind.dec_h * 60.0));
+                if ui.button("Ver memória de cálculo").clicked() {
+                    calculation_preview = Some(engine::calculation_preview_text(r));
+                }
             }
             Err(e) => {
                 ui.colored_label(egui::Color32::from_rgb(230, 120, 120), e);
             }
+        }
+        if let Some(preview) = calculation_preview {
+            self.ron_dialog = Some(RonDialog {
+                kind: RonKind::Calculation,
+                mode: RonMode::Export,
+                text: String::new(),
+                preview: Some(preview),
+                center_on_open: true,
+                status: None,
+            });
         }
     }
 }
@@ -1745,6 +1798,8 @@ fn dialog_title(kind: RonKind, mode: RonMode) -> &'static str {
         (RonKind::Network, RonMode::Export) => "Exportar rede",
         (RonKind::Scenario, RonMode::Import) => "Importar eventos",
         (RonKind::Scenario, RonMode::Export) => "Exportar eventos",
+        (RonKind::Calculation, RonMode::Import) => "Memória de cálculo",
+        (RonKind::Calculation, RonMode::Export) => "Memória de cálculo",
     }
 }
 
@@ -1752,6 +1807,7 @@ fn default_file_name(kind: RonKind) -> &'static str {
     match kind {
         RonKind::Network => "rede-layout.ron",
         RonKind::Scenario => "eventos.ron",
+        RonKind::Calculation => "memoria-calculo.txt",
     }
 }
 

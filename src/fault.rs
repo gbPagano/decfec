@@ -54,6 +54,20 @@ pub struct Scenario {
 #[derive(Debug, Clone, Default)]
 pub struct SimResult {
     pub interruptions: HashMap<usize, Vec<f64>>,
+    pub intervals: HashMap<usize, Vec<OutageInterval>>,
+}
+
+/// Intervalo contínuo em que um ramo ficou desenergizado.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OutageInterval {
+    pub start_min: f64,
+    pub end_min: f64,
+}
+
+impl OutageInterval {
+    pub fn duration_min(&self) -> f64 {
+        self.end_min - self.start_min
+    }
 }
 
 /// Indicadores de um conjunto de consumidores.
@@ -196,24 +210,44 @@ impl Scenario {
         // Converte as fases sem energia em durações de interrupção por bloco.
         let last = *times.last().unwrap();
         let mut interruptions: HashMap<usize, Vec<f64>> = HashMap::new();
+        let mut intervals: HashMap<usize, Vec<OutageInterval>> = HashMap::new();
         for (&li, phases) in &out_phase {
             let mut start: Option<f64> = None;
             for (k, &out) in phases.iter().enumerate() {
                 match (out, start) {
                     (true, None) => start = Some(times[k]),
                     (false, Some(s)) => {
-                        interruptions.entry(li).or_default().push(times[k] - s);
+                        let interval = OutageInterval {
+                            start_min: s,
+                            end_min: times[k],
+                        };
+                        interruptions
+                            .entry(li)
+                            .or_default()
+                            .push(interval.duration_min());
+                        intervals.entry(li).or_default().push(interval);
                         start = None;
                     }
                     _ => {}
                 }
             }
             if let Some(s) = start {
-                interruptions.entry(li).or_default().push(last - s);
+                let interval = OutageInterval {
+                    start_min: s,
+                    end_min: last,
+                };
+                interruptions
+                    .entry(li)
+                    .or_default()
+                    .push(interval.duration_min());
+                intervals.entry(li).or_default().push(interval);
             }
         }
 
-        Ok(SimResult { interruptions })
+        Ok(SimResult {
+            interruptions,
+            intervals,
+        })
     }
 }
 
@@ -282,6 +316,15 @@ mod tests {
         assert_eq!(dur("A"), Some(vec![2.0])); // montante: 0->2 min
         assert_eq!(dur("B"), Some(vec![120.0])); // faltado: 0->reparo
         assert_eq!(dur("C"), Some(vec![30.0])); // transferido: 0->30 min
+
+        let intervals = res.intervals.get(&net.branch_index("B").unwrap()).unwrap();
+        assert_eq!(
+            intervals,
+            &[OutageInterval {
+                start_min: 0.0,
+                end_min: 120.0
+            }]
+        );
     }
 
     #[test]
