@@ -770,9 +770,23 @@ impl App {
                     .changed()
                 {
                     let new_id = id_buf.trim();
-                    if !new_id.is_empty() && new_id != id {
+                    if !new_id.is_empty()
+                        && new_id != id
+                        && !bus_id_already_exists(net, &id, new_id)
+                    {
                         rename_to = Some(new_id.to_string());
                     }
+                }
+
+                let edited_id = id_buf.trim().to_string();
+                if !edited_id.is_empty()
+                    && edited_id != id
+                    && bus_id_already_exists(net, &id, &edited_id)
+                {
+                    let msg = format!("já existe uma barra com id '{edited_id}'");
+                    ui.colored_label(egui::Color32::from_rgb(230, 120, 120), &msg);
+                    self.net_status = Err(msg);
+                    return;
                 }
 
                 if let Some(new_id) = rename_to {
@@ -1244,6 +1258,12 @@ fn unique_id<'a>(existing: impl Iterator<Item = &'a str>, prefixo: &str) -> Stri
         .expect("sequência infinita sempre acha um id livre")
 }
 
+fn bus_id_already_exists(net: &Network, current_id: &str, candidate: &str) -> bool {
+    net.buses
+        .iter()
+        .any(|bus| bus.id != current_id && bus.id == candidate)
+}
+
 fn default_network_document_ron() -> String {
     let network = Network::from_ron(REDE_PADRAO).expect("rede padrão deve carregar");
     let layout =
@@ -1443,5 +1463,26 @@ mod tests {
 
         assert!(!doc.network.buses.is_empty());
         assert!(doc.layout.positions.is_empty());
+    }
+
+    #[test]
+    fn detecta_id_de_barra_duplicado_ignorando_barra_atual() {
+        let net = Network {
+            buses: vec![
+                Bus {
+                    id: "b1".to_string(),
+                    kind: BusKind::Junction,
+                },
+                Bus {
+                    id: "b2".to_string(),
+                    kind: BusKind::Junction,
+                },
+            ],
+            branches: Vec::new(),
+        };
+
+        assert!(bus_id_already_exists(&net, "b2", "b1"));
+        assert!(!bus_id_already_exists(&net, "b2", "b2"));
+        assert!(!bus_id_already_exists(&net, "b2", "b3"));
     }
 }
