@@ -61,6 +61,8 @@ pub struct CanvasState {
     drag: Drag,
     /// Centro visível atual, em coordenadas-mundo.
     view_center_world: Pos2,
+    /// Posição atual do cursor em coordenadas-mundo, se estiver sobre o canvas.
+    hover_world: Option<Pos2>,
     /// Seleções atuais (lidas pelo painel de edição).
     pub selections: Vec<Selection>,
 }
@@ -79,6 +81,7 @@ impl Default for CanvasState {
             needs_fit: true,
             drag: Drag::None,
             view_center_world: Pos2::ZERO,
+            hover_world: None,
             selections: Vec::new(),
         }
     }
@@ -102,6 +105,12 @@ impl CanvasState {
     /// Posição para criar um nó novo: centro visível atual do canvas.
     pub fn insertion_pos(&self) -> Pos2 {
         self.view_center_world
+    }
+
+    /// Posição preferida para colar/copiar elementos: cursor sobre o canvas,
+    /// ou o centro visível se o cursor estiver fora.
+    pub fn paste_pos(&self) -> Pos2 {
+        self.hover_world.unwrap_or(self.view_center_world)
     }
 
     fn is_selected(&self, selection: &Selection) -> bool {
@@ -253,6 +262,7 @@ pub fn draw(
     }
 
     st.view_center_world = to_world(center, pan, zoom, center);
+    st.hover_world = pointer.map(|p| to_world(center, pan, zoom, p));
 
     paint(
         &painter,

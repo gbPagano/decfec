@@ -81,6 +81,18 @@ enum FileResult {
 
 type PendingFileResult = Rc<RefCell<Option<FileResult>>>;
 
+#[derive(Clone)]
+struct GraphClipboard {
+    buses: Vec<CopiedBus>,
+    branches: Vec<Branch>,
+}
+
+#[derive(Clone)]
+struct CopiedBus {
+    bus: Bus,
+    pos: Pos2,
+}
+
 /// Aplicação egui.
 ///
 /// Nesta etapa o fluxo é dirigido por texto RON (rede + cenário). O editor de
@@ -127,6 +139,8 @@ pub struct App {
     help_center_on_open: bool,
     /// Resultado assíncrono de upload/download em WASM.
     pending_file_result: PendingFileResult,
+    /// Clipboard interno para Ctrl+C/Ctrl+V no grafo.
+    graph_clipboard: Option<GraphClipboard>,
 }
 
 impl App {
@@ -154,6 +168,7 @@ impl App {
             help_open: false,
             help_center_on_open: false,
             pending_file_result: Rc::new(RefCell::new(None)),
+            graph_clipboard: None,
         };
         let restored_network = cc
             .storage
@@ -486,6 +501,7 @@ impl App {
                         ui.label(
                             "- Segure Ctrl enquanto clica para selecionar várias barras ou alternar itens na seleção.",
                         );
+                        ui.label("- Use Ctrl+C e Ctrl+V para copiar e colar a seleção no grafo.");
                         ui.label("- Use Delete ou Excluir seleção para remover itens selecionados.");
                         ui.label(
                             "- Para esconder o label de uma barra, selecione a barra e desmarque Exibir label no grafo.",
@@ -985,12 +1001,21 @@ impl App {
             &self.hidden_bus_labels,
         );
 
-        let delete_pressed = ui.input(|i| i.key_pressed(egui::Key::Delete));
-        if delete_pressed
-            && !ui.ctx().egui_wants_keyboard_input()
-            && !self.canvas.selections.is_empty()
-        {
-            self.delete_selection();
+        if !ui.ctx().egui_wants_keyboard_input() {
+            let copy_pressed = ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::C));
+            if copy_pressed {
+                self.copy_selection();
+            }
+
+            let paste_pressed = ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::V));
+            if paste_pressed {
+                self.paste_selection();
+            }
+
+            let delete_pressed = ui.input(|i| i.key_pressed(egui::Key::Delete));
+            if delete_pressed && !self.canvas.selections.is_empty() {
+                self.delete_selection();
+            }
         }
     }
 
@@ -1053,6 +1078,40 @@ impl App {
             .set_selection(Selection::Branch(net.branches.len() - 1));
         self.branch_nodes_editor = None;
         self.bus_id_editor = None;
+        self.revalidate();
+        self.mark_network_dirty();
+    }
+
+    fn copy_selection(&mut self) {
+        let Some(net) = &self.net else {
+            return;
+        };
+        let Some(clipboard) = copy_graph_selection(net, &self.positions, &self.canvas.selections)
+        else {
+            return;
+        };
+        self.graph_clipboard = Some(clipboard);
+        self.net_status = Ok("seleção copiada".to_string());
+    }
+
+    fn paste_selection(&mut self) {
+        let Some(net) = self.net.as_mut() else {
+            return;
+        };
+        let Some(clipboard) = self.graph_clipboard.as_mut() else {
+            return;
+        };
+
+        let paste_pos = self.canvas.paste_pos();
+        let selections = paste_graph_clipboard(net, &mut self.positions, clipboard, paste_pos);
+        if selections.is_empty() {
+            return;
+        }
+
+        self.canvas.selections = selections;
+        self.branch_nodes_editor = None;
+        self.bus_id_editor = None;
+        self.report = None;
         self.revalidate();
         self.mark_network_dirty();
     }
@@ -1258,10 +1317,150 @@ fn unique_id<'a>(existing: impl Iterator<Item = &'a str>, prefixo: &str) -> Stri
         .expect("sequência infinita sempre acha um id livre")
 }
 
+fn unique_suffixed_id(used: &HashSet<String>, base: &str) -> String {
+    (1..)
+        .map(|n| {
+            if n == 1 {
+                format!("{base}_copy")
+            } else {
+                format!("{base}_copy{n}")
+            }
+        })
+        .find(|id| !used.contains(id))
+        .expect("sequência infinita sempre acha um id livre")
+}
+
 fn bus_id_already_exists(net: &Network, current_id: &str, candidate: &str) -> bool {
     net.buses
         .iter()
         .any(|bus| bus.id != current_id && bus.id == candidate)
+}
+
+fn copy_graph_selection(
+    net: &Network,
+    positions: &HashMap<String, Pos2>,
+    selections: &[Selection],
+) -> Option<GraphClipboard> {
+    let selected_bus_ids: HashSet<String> = selections
+        .iter()
+        .filter_map(|selection| match selection {
+            Selection::Bus(id) => Some(id.clone()),
+            Selection::Branch(_) => None,
+        })
+        .collect();
+    let selected_branch_indices: HashSet<usize> = selections
+        .iter()
+        .filter_map(|selection| match selection {
+            Selection::Branch(i) => Some(*i),
+            Selection::Bus(_) => None,
+        })
+        .collect();
+
+    let mut branch_indices = Vec::new();
+    for (i, branch) in net.branches.iter().enumerate() {
+        let explicitly_selected = selected_branch_indices.contains(&i);
+        let connects_selected_buses = !selected_bus_ids.is_empty()
+            && branch
+                .nodes
+                .iter()
+                .all(|node| selected_bus_ids.contains(node));
+        if explicitly_selected || connects_selected_buses {
+            branch_indices.push(i);
+        }
+    }
+
+    let mut bus_ids = selected_bus_ids;
+    for &i in &branch_indices {
+        if let Some(branch) = net.branches.get(i) {
+            bus_ids.extend(branch.nodes.iter().cloned());
+        }
+    }
+
+    let buses: Vec<CopiedBus> = net
+        .buses
+        .iter()
+        .filter(|bus| bus_ids.contains(&bus.id))
+        .map(|bus| CopiedBus {
+            bus: bus.clone(),
+            pos: positions.get(&bus.id).copied().unwrap_or(Pos2::ZERO),
+        })
+        .collect();
+    if buses.is_empty() {
+        return None;
+    }
+
+    let branches = branch_indices
+        .into_iter()
+        .filter_map(|i| net.branches.get(i).cloned())
+        .collect();
+
+    Some(GraphClipboard { buses, branches })
+}
+
+fn paste_graph_clipboard(
+    net: &mut Network,
+    positions: &mut HashMap<String, Pos2>,
+    clipboard: &mut GraphClipboard,
+    target_pos: Pos2,
+) -> Vec<Selection> {
+    if clipboard.buses.is_empty() {
+        return Vec::new();
+    }
+
+    let offset = target_pos - copied_buses_center(&clipboard.buses);
+    let mut used_bus_ids: HashSet<String> = net.buses.iter().map(|bus| bus.id.clone()).collect();
+    let mut id_map = HashMap::new();
+    let mut selections = Vec::new();
+
+    for copied in &clipboard.buses {
+        let new_id = unique_suffixed_id(&used_bus_ids, &copied.bus.id);
+        used_bus_ids.insert(new_id.clone());
+        id_map.insert(copied.bus.id.clone(), new_id.clone());
+
+        let mut bus = copied.bus.clone();
+        bus.id = new_id.clone();
+        net.buses.push(bus);
+        positions.insert(new_id.clone(), copied.pos + offset);
+        selections.push(Selection::Bus(new_id));
+    }
+
+    let mut used_branch_ids: HashSet<String> = net
+        .branches
+        .iter()
+        .filter_map(|branch| branch.id.clone())
+        .collect();
+    used_branch_ids.extend(used_bus_ids);
+    for copied in &clipboard.branches {
+        let Some(nodes) = copied
+            .nodes
+            .iter()
+            .map(|node| id_map.get(node).cloned())
+            .collect::<Option<Vec<_>>>()
+        else {
+            continue;
+        };
+
+        let mut branch = copied.clone();
+        branch.nodes = nodes;
+        if let Some(id) = &copied.id {
+            let new_id = unique_suffixed_id(&used_branch_ids, id);
+            used_branch_ids.insert(new_id.clone());
+            branch.id = Some(new_id);
+        }
+
+        let new_idx = net.branches.len();
+        net.branches.push(branch);
+        selections.push(Selection::Branch(new_idx));
+    }
+
+    selections
+}
+
+fn copied_buses_center(buses: &[CopiedBus]) -> Pos2 {
+    let sum = buses
+        .iter()
+        .fold(egui::Vec2::ZERO, |acc, copied| acc + copied.pos.to_vec2());
+    (sum / buses.len() as f32).to_pos2()
 }
 
 fn default_network_document_ron() -> String {
@@ -1484,5 +1683,99 @@ mod tests {
         assert!(bus_id_already_exists(&net, "b2", "b1"));
         assert!(!bus_id_already_exists(&net, "b2", "b2"));
         assert!(!bus_id_already_exists(&net, "b2", "b3"));
+    }
+
+    #[test]
+    fn copia_e_cola_barras_com_ramo_entre_selecionadas() {
+        let mut net = Network {
+            buses: vec![
+                Bus {
+                    id: "s".to_string(),
+                    kind: BusKind::Substation,
+                },
+                Bus {
+                    id: "b1".to_string(),
+                    kind: BusKind::Junction,
+                },
+            ],
+            branches: vec![Branch {
+                id: Some("tr_s_b1".to_string()),
+                nodes: vec!["s".to_string(), "b1".to_string()],
+                element: Element::Line { consumers: 10 },
+            }],
+        };
+        let mut positions = HashMap::from([
+            ("s".to_string(), Pos2::new(0.0, 0.0)),
+            ("b1".to_string(), Pos2::new(100.0, 0.0)),
+        ]);
+        let selections = vec![
+            Selection::Bus("s".to_string()),
+            Selection::Bus("b1".to_string()),
+        ];
+        let mut clipboard =
+            copy_graph_selection(&net, &positions, &selections).expect("seleção deve ser copiável");
+
+        let pasted = paste_graph_clipboard(
+            &mut net,
+            &mut positions,
+            &mut clipboard,
+            Pos2::new(200.0, 50.0),
+        );
+
+        assert_eq!(net.buses[2].id, "s_copy");
+        assert_eq!(net.buses[3].id, "b1_copy");
+        assert_eq!(net.branches[1].id.as_deref(), Some("tr_s_b1_copy"));
+        assert_eq!(
+            net.branches[1].nodes,
+            vec!["s_copy".to_string(), "b1_copy".to_string()]
+        );
+        assert_eq!(positions["s_copy"], Pos2::new(150.0, 50.0));
+        assert_eq!(positions["b1_copy"], Pos2::new(250.0, 50.0));
+        assert!(
+            pasted
+                .iter()
+                .any(|selection| matches!(selection, Selection::Branch(1)))
+        );
+
+        paste_graph_clipboard(
+            &mut net,
+            &mut positions,
+            &mut clipboard,
+            Pos2::new(300.0, 80.0),
+        );
+
+        assert_eq!(net.buses[4].id, "s_copy2");
+        assert_eq!(net.buses[5].id, "b1_copy2");
+        assert_eq!(net.branches[2].id.as_deref(), Some("tr_s_b1_copy2"));
+        assert_eq!(positions["s_copy2"], Pos2::new(250.0, 80.0));
+        assert_eq!(positions["b1_copy2"], Pos2::new(350.0, 80.0));
+    }
+
+    #[test]
+    fn copia_de_ramo_selecionado_inclui_barras_terminais() {
+        let net = Network {
+            buses: vec![
+                Bus {
+                    id: "a".to_string(),
+                    kind: BusKind::Substation,
+                },
+                Bus {
+                    id: "b".to_string(),
+                    kind: BusKind::Junction,
+                },
+            ],
+            branches: vec![Branch {
+                id: Some("ramo".to_string()),
+                nodes: vec!["a".to_string(), "b".to_string()],
+                element: Element::Line { consumers: 0 },
+            }],
+        };
+        let positions = HashMap::new();
+
+        let clipboard = copy_graph_selection(&net, &positions, &[Selection::Branch(0)])
+            .expect("ramo selecionado deve copiar seus terminais");
+
+        assert_eq!(clipboard.buses.len(), 2);
+        assert_eq!(clipboard.branches.len(), 1);
     }
 }
