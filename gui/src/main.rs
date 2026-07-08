@@ -15,7 +15,10 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "decfec",
         native_options,
-        Box::new(|cc| Ok(Box::new(decfec_gui::App::new(cc)))),
+        Box::new(|cc| {
+            cc.egui_ctx.set_theme(egui::Theme::Dark);
+            Ok(Box::new(decfec_gui::App::new(cc)))
+        }),
     )
 }
 
@@ -41,7 +44,10 @@ fn main() {
             .start(
                 canvas,
                 web_options,
-                Box::new(|cc| Ok(Box::new(decfec_gui::App::new(cc)))),
+                Box::new(|cc| {
+                    cc.egui_ctx.set_theme(egui::Theme::Dark);
+                    Ok(Box::new(decfec_gui::App::new(cc)))
+                }),
             )
             .await;
 
