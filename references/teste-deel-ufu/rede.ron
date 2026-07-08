@@ -1,0 +1,2079 @@
+(
+    network: (
+        buses: [
+            (
+                id: "SD1",
+                kind: Substation,
+            ),
+            (
+                id: "2",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "3",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "4",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "5",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "F2",
+                kind: Junction,
+            ),
+            (
+                id: "NA1",
+                kind: Switch(
+                    normal: Open,
+                ),
+            ),
+            (
+                id: "NA2",
+                kind: Switch(
+                    normal: Open,
+                ),
+            ),
+            (
+                id: "b1",
+                kind: Junction,
+            ),
+            (
+                id: "6",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "10",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "11",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "NA8",
+                kind: Switch(
+                    normal: Open,
+                ),
+            ),
+            (
+                id: "NA7",
+                kind: Switch(
+                    normal: Open,
+                ),
+            ),
+            (
+                id: "F1",
+                kind: Junction,
+            ),
+            (
+                id: "7",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "8",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "9",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "NA6",
+                kind: Switch(
+                    normal: Open,
+                ),
+            ),
+            (
+                id: "NA4",
+                kind: Switch(
+                    normal: Open,
+                ),
+            ),
+            (
+                id: "NA3",
+                kind: Switch(
+                    normal: Open,
+                ),
+            ),
+            (
+                id: "SD3",
+                kind: Substation,
+            ),
+            (
+                id: "NA9",
+                kind: Switch(
+                    normal: Open,
+                ),
+            ),
+            (
+                id: "37",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "36",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "35",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "23",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "24",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "25",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "27",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "26",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "34",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "33",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "28",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "F5",
+                kind: Junction,
+            ),
+            (
+                id: "F4",
+                kind: Junction,
+            ),
+            (
+                id: "29",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "30",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "31",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "32",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "b2",
+                kind: Junction,
+            ),
+            (
+                id: "b3",
+                kind: Junction,
+            ),
+            (
+                id: "NA5",
+                kind: Switch(
+                    normal: Open,
+                ),
+            ),
+            (
+                id: "SD2",
+                kind: Substation,
+            ),
+            (
+                id: "12",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "13",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "15",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "14",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "F3",
+                kind: Junction,
+            ),
+            (
+                id: "16",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "17",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "18",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "19",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "20",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "21",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "b4",
+                kind: Junction,
+            ),
+            (
+                id: "NA10",
+                kind: Switch(
+                    normal: Open,
+                ),
+            ),
+            (
+                id: "SD4",
+                kind: Substation,
+            ),
+            (
+                id: "39",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "40",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "41",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "42",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "43",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "44",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "45",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "46",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "47",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "48",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "49",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "50",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "b5",
+                kind: Junction,
+            ),
+            (
+                id: "NA11",
+                kind: Switch(
+                    normal: Open,
+                ),
+            ),
+            (
+                id: "b2_copy",
+                kind: Junction,
+            ),
+            (
+                id: "F6",
+                kind: Junction,
+            ),
+            (
+                id: "SD5",
+                kind: Substation,
+            ),
+            (
+                id: "52",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "53",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "54",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "55",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "56",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "57",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "58",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "59",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "60",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "61",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "F8",
+                kind: Junction,
+            ),
+            (
+                id: "NA13",
+                kind: Switch(
+                    normal: Open,
+                ),
+            ),
+            (
+                id: "F7",
+                kind: Junction,
+            ),
+            (
+                id: "NA12",
+                kind: Switch(
+                    normal: Open,
+                ),
+            ),
+            (
+                id: "b4_copy",
+                kind: Junction,
+            ),
+            (
+                id: "SD6",
+                kind: Substation,
+            ),
+            (
+                id: "63",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "64",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "65",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "66",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "67",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "b5_copy",
+                kind: Junction,
+            ),
+            (
+                id: "F9",
+                kind: Junction,
+            ),
+            (
+                id: "F10",
+                kind: Junction,
+            ),
+            (
+                id: "SD7",
+                kind: Substation,
+            ),
+            (
+                id: "69",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "70",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "71",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "72",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "73",
+                kind: Switch(
+                    normal: Closed,
+                ),
+            ),
+            (
+                id: "F11",
+                kind: Junction,
+            ),
+            (
+                id: "b4_copy_copy",
+                kind: Junction,
+            ),
+            (
+                id: "H",
+                kind: Junction,
+            ),
+        ],
+        branches: [
+            (
+                id: Some("ramo_2_SD1"),
+                nodes: [
+                    "2",
+                    "SD1",
+                ],
+                element: Line(
+                    consumers: 0,
+                ),
+            ),
+            (
+                id: Some("ramo_3_2"),
+                nodes: [
+                    "3",
+                    "2",
+                ],
+                element: Line(
+                    consumers: 900,
+                ),
+            ),
+            (
+                id: Some("ramo_F2_3"),
+                nodes: [
+                    "F2",
+                    "3",
+                ],
+                element: Line(
+                    consumers: 0,
+                ),
+            ),
+            (
+                id: Some("ramo_F2_4_NA1_5"),
+                nodes: [
+                    "F2",
+                    "4",
+                    "NA1",
+                    "5",
+                ],
+                element: Line(
+                    consumers: 700,
+                ),
+            ),
+            (
+                id: Some("ramo_NA2_b1_4"),
+                nodes: [
+                    "NA2",
+                    "b1",
+                    "4",
+                ],
+                element: Line(
+                    consumers: 600,
+                ),
+            ),
+            (
+                id: Some("ramo_6_b1_10"),
+                nodes: [
+                    "6",
+                    "b1",
+                    "10",
+                ],
+                element: Line(
+                    consumers: 300,
+                ),
+            ),
+            (
+                id: Some("ramo_10_11"),
+                nodes: [
+                    "10",
+                    "11",
+                ],
+                element: Line(
+                    consumers: 300,
+                ),
+            ),
+            (
+                id: Some("ramo_NA8_NA7_11"),
+                nodes: [
+                    "NA8",
+                    "NA7",
+                    "11",
+                ],
+                element: Line(
+                    consumers: 200,
+                ),
+            ),
+            (
+                id: Some("ramo_6_F1"),
+                nodes: [
+                    "6",
+                    "F1",
+                ],
+                element: Line(
+                    consumers: 0,
+                ),
+            ),
+            (
+                id: Some("ramo_7_F1"),
+                nodes: [
+                    "7",
+                    "F1",
+                ],
+                element: Line(
+                    consumers: 600,
+                ),
+            ),
+            (
+                id: Some("ramo_8_7"),
+                nodes: [
+                    "8",
+                    "7",
+                ],
+                element: Line(
+                    consumers: 200,
+                ),
+            ),
+            (
+                id: Some("ramo_9_8"),
+                nodes: [
+                    "9",
+                    "8",
+                ],
+                element: Line(
+                    consumers: 500,
+                ),
+            ),
+            (
+                id: Some("ramo_9_NA6"),
+                nodes: [
+                    "9",
+                    "NA6",
+                ],
+                element: Line(
+                    consumers: 300,
+                ),
+            ),
+            (
+                id: Some("ramo_NA4_NA3_5"),
+                nodes: [
+                    "NA4",
+                    "NA3",
+                    "5",
+                ],
+                element: Line(
+                    consumers: 400,
+                ),
+            ),
+            (
+                id: Some("ramo_NA3_37"),
+                nodes: [
+                    "NA3",
+                    "37",
+                ],
+                element: Line(
+                    consumers: 200,
+                ),
+            ),
+            (
+                id: Some("ramo_NA9_NA6_36_37"),
+                nodes: [
+                    "NA9",
+                    "NA6",
+                    "36",
+                    "37",
+                ],
+                element: Line(
+                    consumers: 300,
+                ),
+            ),
+            (
+                id: Some("ramo_35_36"),
+                nodes: [
+                    "35",
+                    "36",
+                ],
+                element: Line(
+                    consumers: 400,
+                ),
+            ),
+            (
+                id: Some("ramo_23_SD3"),
+                nodes: [
+                    "23",
+                    "SD3",
+                ],
+                element: Line(
+                    consumers: 0,
+                ),
+            ),
+            (
+                id: Some("ramo_F5_23"),
+                nodes: [
+                    "F5",
+                    "23",
+                ],
+                element: Line(
+                    consumers: 1200,
+                ),
+            ),
+            (
+                id: Some("ramo_F5_24"),
+                nodes: [
+                    "F5",
+                    "24",
+                ],
+                element: Line(
+                    consumers: 0,
+                ),
+            ),
+            (
+                id: Some("ramo_24_27_25_NA4"),
+                nodes: [
+                    "24",
+                    "27",
+                    "25",
+                    "NA4",
+                ],
+                element: Line(
+                    consumers: 800,
+                ),
+            ),
+            (
+                id: Some("ramo_34_35"),
+                nodes: [
+                    "34",
+                    "35",
+                ],
+                element: Line(
+                    consumers: 300,
+                ),
+            ),
+            (
+                id: Some("ramo_33_34"),
+                nodes: [
+                    "33",
+                    "34",
+                ],
+                element: Line(
+                    consumers: 200,
+                ),
+            ),
+            (
+                id: Some("ramo_F4_33"),
+                nodes: [
+                    "F4",
+                    "33",
+                ],
+                element: Line(
+                    consumers: 0,
+                ),
+            ),
+            (
+                id: Some("ramo_F4_28_29"),
+                nodes: [
+                    "F4",
+                    "28",
+                    "29",
+                ],
+                element: Line(
+                    consumers: 400,
+                ),
+            ),
+            (
+                id: Some("ramo_NA5_27_28"),
+                nodes: [
+                    "NA5",
+                    "27",
+                    "28",
+                ],
+                element: Line(
+                    consumers: 500,
+                ),
+            ),
+            (
+                id: Some("ramo_31_30"),
+                nodes: [
+                    "31",
+                    "30",
+                ],
+                element: Line(
+                    consumers: 500,
+                ),
+            ),
+            (
+                id: Some("ramo_26_25"),
+                nodes: [
+                    "26",
+                    "25",
+                ],
+                element: Line(
+                    consumers: 500,
+                ),
+            ),
+            (
+                id: Some("ramo_26_b3"),
+                nodes: [
+                    "26",
+                    "b3",
+                ],
+                element: Line(
+                    consumers: 300,
+                ),
+            ),
+            (
+                id: Some("ramo_32_NA7_31"),
+                nodes: [
+                    "32",
+                    "NA7",
+                    "31",
+                ],
+                element: Line(
+                    consumers: 300,
+                ),
+            ),
+            (
+                id: Some("ramo_b2_32"),
+                nodes: [
+                    "b2",
+                    "32",
+                ],
+                element: Line(
+                    consumers: 100,
+                ),
+            ),
+            (
+                id: Some("ramo_12_SD2"),
+                nodes: [
+                    "12",
+                    "SD2",
+                ],
+                element: Line(
+                    consumers: 0,
+                ),
+            ),
+            (
+                id: Some("ramo_b4_NA10"),
+                nodes: [
+                    "b4",
+                    "NA10",
+                ],
+                element: Line(
+                    consumers: 0,
+                ),
+            ),
+            (
+                id: Some("ramo_12_13_15"),
+                nodes: [
+                    "12",
+                    "13",
+                    "15",
+                ],
+                element: Line(
+                    consumers: 0,
+                ),
+            ),
+            (
+                id: Some("ramo_14_13"),
+                nodes: [
+                    "14",
+                    "13",
+                ],
+                element: Line(
+                    consumers: 900,
+                ),
+            ),
+            (
+                id: Some("ramo_14_NA2"),
+                nodes: [
+                    "14",
+                    "NA2",
+                ],
+                element: Line(
+                    consumers: 200,
+                ),
+            ),
+            (
+                id: Some("ramo_15_F3"),
+                nodes: [
+                    "15",
+                    "F3",
+                ],
+                element: Line(
+                    consumers: 0,
+                ),
+            ),
+            (
+                id: Some("ramo_16_NA1_F3"),
+                nodes: [
+                    "16",
+                    "NA1",
+                    "F3",
+                ],
+                element: Line(
+                    consumers: 1200,
+                ),
+            ),
+            (
+                id: Some("ramo_17_16"),
+                nodes: [
+                    "17",
+                    "16",
+                ],
+                element: Line(
+                    consumers: 800,
+                ),
+            ),
+            (
+                id: Some("ramo_18_17"),
+                nodes: [
+                    "18",
+                    "17",
+                ],
+                element: Line(
+                    consumers: 700,
+                ),
+            ),
+            (
+                id: Some("ramo_19_18"),
+                nodes: [
+                    "19",
+                    "18",
+                ],
+                element: Line(
+                    consumers: 600,
+                ),
+            ),
+            (
+                id: Some("ramo_19_b4"),
+                nodes: [
+                    "19",
+                    "b4",
+                ],
+                element: Line(
+                    consumers: 400,
+                ),
+            ),
+            (
+                id: Some("ramo_b4_20"),
+                nodes: [
+                    "b4",
+                    "20",
+                ],
+                element: Line(
+                    consumers: 0,
+                ),
+            ),
+            (
+                id: Some("ramo_20_21"),
+                nodes: [
+                    "20",
+                    "21",
+                ],
+                element: Line(
+                    consumers: 300,
+                ),
+            ),
+            (
+                id: Some("ramo_21_NA5"),
+                nodes: [
+                    "21",
+                    "NA5",
+                ],
+                element: Line(
+                    consumers: 100,
+                ),
+            ),
+            (
+                id: Some("ramo_39_SD4"),
+                nodes: [
+                    "39",
+                    "SD4",
+                ],
+                element: Line(
+                    consumers: 0,
+                ),
+            ),
+            (
+                id: Some("ramo_39_40"),
+                nodes: [
+                    "39",
+                    "40",
+                ],
+                element: Line(
+                    consumers: 400,
+                ),
+            ),
+            (
+                id: Some("ramo_41_NA11_40"),
+                nodes: [
+                    "41",
+                    "NA11",
+                    "40",
+                ],
+                element: Line(
+                    consumers: 200,
+                ),
+            ),
+            (
+                id: Some("ramo_41_b2_copy"),
+                nodes: [
+                    "41",
+                    "b2_copy",
+                ],
+                element: Line(
+                    consumers: 300,
+                ),
+            ),
+            (
+                id: Some("ramo_42_NA8_b2_copy"),
+                nodes: [
+                    "42",
+                    "NA8",
+                    "b2_copy",
+                ],
+                element: Line(
+                    consumers: 0,
+                ),
+            ),
+            (
+                id: Some("ramo_43_42"),
+                nodes: [
+                    "43",
+                    "42",
+                ],
+                element: Line(
+                    consumers: 200,
+                ),
+            ),
+            (
+                id: Some("ramo_44_43"),
+                nodes: [
+                    "44",
+                    "43",
+                ],
+                element: Line(
+                    consumers: 150,
+                ),
+            ),
+            (
+                id: Some("ramo_44_F6"),
+                nodes: [
+                    "44",
+                    "F6",
+                ],
+                element: Line(
+                    consumers: 100,
+                ),
+            ),
+            (
+                id: Some("ramo_45_F6"),
+                nodes: [
+                    "45",
+                    "F6",
+                ],
+                element: Line(
+                    consumers: 0,
+                ),
+            ),
+            (
+                id: Some("ramo_45_46"),
+                nodes: [
+                    "45",
+                    "46",
+                ],
+                element: Line(
+                    consumers: 50,
+                ),
+            ),
+            (
+                id: Some("ramo_47_NA9_46"),
+                nodes: [
+                    "47",
+                    "NA9",
+                    "46",
+                ],
+                element: Line(
+                    consumers: 50,
+                ),
+            ),
+            (
+                id: Some("ramo_48_47"),
+                nodes: [
+                    "48",
+                    "47",
+                ],
+                element: Line(
+                    consumers: 25,
+                ),
+            ),
+            (
+                id: Some("ramo_49_48"),
+                nodes: [
+                    "49",
+                    "48",
+                ],
+                element: Line(
+                    consumers: 25,
+                ),
+            ),
+            (
+                id: Some("ramo_49_50"),
+                nodes: [
+                    "49",
+                    "50",
+                    "NA10",
+                ],
+                element: Line(
+                    consumers: 50,
+                ),
+            ),
+            (
+                id: Some("ramo_b5_50"),
+                nodes: [
+                    "b5",
+                    "50",
+                ],
+                element: Line(
+                    consumers: 50,
+                ),
+            ),
+            (
+                id: Some("ramo_SD5_52"),
+                nodes: [
+                    "SD5",
+                    "52",
+                ],
+                element: Line(
+                    consumers: 0,
+                ),
+            ),
+            (
+                id: Some("ramo_52_53"),
+                nodes: [
+                    "52",
+                    "53",
+                ],
+                element: Line(
+                    consumers: 1500,
+                ),
+            ),
+            (
+                id: Some("ramo_53_F8"),
+                nodes: [
+                    "53",
+                    "F8",
+                ],
+                element: Line(
+                    consumers: 600,
+                ),
+            ),
+            (
+                id: Some("ramo_54_F8"),
+                nodes: [
+                    "54",
+                    "F8",
+                ],
+                element: Line(
+                    consumers: 0,
+                ),
+            ),
+            (
+                id: Some("ramo_55_54_NA13"),
+                nodes: [
+                    "55",
+                    "54",
+                    "NA13",
+                ],
+                element: Line(
+                    consumers: 400,
+                ),
+            ),
+            (
+                id: Some("ramo_55_56"),
+                nodes: [
+                    "55",
+                    "56",
+                ],
+                element: Line(
+                    consumers: 200,
+                ),
+            ),
+            (
+                id: Some("ramo_57_56"),
+                nodes: [
+                    "57",
+                    "56",
+                ],
+                element: Line(
+                    consumers: 200,
+                ),
+            ),
+            (
+                id: Some("ramo_58_NA11_57"),
+                nodes: [
+                    "58",
+                    "NA11",
+                    "57",
+                ],
+                element: Line(
+                    consumers: 100,
+                ),
+            ),
+            (
+                id: Some("ramo_58_59"),
+                nodes: [
+                    "58",
+                    "59",
+                ],
+                element: Line(
+                    consumers: 150,
+                ),
+            ),
+            (
+                id: Some("ramo_F7_59"),
+                nodes: [
+                    "F7",
+                    "59",
+                ],
+                element: Line(
+                    consumers: 0,
+                ),
+            ),
+            (
+                id: Some("ramo_NA12_60_F7"),
+                nodes: [
+                    "NA12",
+                    "60",
+                    "F7",
+                ],
+                element: Line(
+                    consumers: 50,
+                ),
+            ),
+            (
+                id: Some("ramo_60_61"),
+                nodes: [
+                    "60",
+                    "61",
+                ],
+                element: Line(
+                    consumers: 40,
+                ),
+            ),
+            (
+                id: Some("ramo_b4_copy_61"),
+                nodes: [
+                    "b4_copy",
+                    "61",
+                ],
+                element: Line(
+                    consumers: 20,
+                ),
+            ),
+            (
+                id: Some("ramo_63_SD6"),
+                nodes: [
+                    "63",
+                    "SD6",
+                ],
+                element: Line(
+                    consumers: 0,
+                ),
+            ),
+            (
+                id: Some("ramo_63_64"),
+                nodes: [
+                    "63",
+                    "64",
+                ],
+                element: Line(
+                    consumers: 900,
+                ),
+            ),
+            (
+                id: Some("ramo_F9_64"),
+                nodes: [
+                    "F9",
+                    "64",
+                ],
+                element: Line(
+                    consumers: 700,
+                ),
+            ),
+            (
+                id: Some("ramo_F9_65"),
+                nodes: [
+                    "F9",
+                    "65",
+                ],
+                element: Line(
+                    consumers: 0,
+                ),
+            ),
+            (
+                id: Some("ramo_66_NA12_65"),
+                nodes: [
+                    "66",
+                    "NA12",
+                    "65",
+                ],
+                element: Line(
+                    consumers: 400,
+                ),
+            ),
+            (
+                id: Some("ramo_66_F10"),
+                nodes: [
+                    "66",
+                    "F10",
+                ],
+                element: Line(
+                    consumers: 200,
+                ),
+            ),
+            (
+                id: Some("ramo_67_F10"),
+                nodes: [
+                    "67",
+                    "F10",
+                ],
+                element: Line(
+                    consumers: 0,
+                ),
+            ),
+            (
+                id: Some("ramo_67_b5_copy"),
+                nodes: [
+                    "67",
+                    "b5_copy",
+                ],
+                element: Line(
+                    consumers: 200,
+                ),
+            ),
+            (
+                id: Some("ramo_b4_copy_copy_73"),
+                nodes: [
+                    "b4_copy_copy",
+                    "73",
+                ],
+                element: Line(
+                    consumers: 100,
+                ),
+            ),
+            (
+                id: Some("ramo_73_72"),
+                nodes: [
+                    "73",
+                    "72",
+                ],
+                element: Line(
+                    consumers: 300,
+                ),
+            ),
+            (
+                id: Some("ramo_72_71_NA13"),
+                nodes: [
+                    "72",
+                    "71",
+                    "NA13",
+                ],
+                element: Line(
+                    consumers: 500,
+                ),
+            ),
+            (
+                id: Some("ramo_F11_71"),
+                nodes: [
+                    "F11",
+                    "71",
+                ],
+                element: Line(
+                    consumers: 0,
+                ),
+            ),
+            (
+                id: Some("ramo_F11_70"),
+                nodes: [
+                    "F11",
+                    "70",
+                ],
+                element: Line(
+                    consumers: 500,
+                ),
+            ),
+            (
+                id: Some("ramo_69_70"),
+                nodes: [
+                    "69",
+                    "70",
+                ],
+                element: Line(
+                    consumers: 600,
+                ),
+            ),
+            (
+                id: Some("ramo_SD7_69"),
+                nodes: [
+                    "SD7",
+                    "69",
+                ],
+                element: Line(
+                    consumers: 0,
+                ),
+            ),
+            (
+                id: Some("ramo_H_29"),
+                nodes: [
+                    "H",
+                    "29",
+                ],
+                element: Line(
+                    consumers: 0,
+                ),
+            ),
+            (
+                id: Some("ramo_H_30"),
+                nodes: [
+                    "H",
+                    "30",
+                ],
+                element: Line(
+                    consumers: 400,
+                ),
+            ),
+        ],
+    ),
+    layout: (
+        positions: [
+            (
+                id: "10",
+                x: 1043.4438,
+                y: -93.65256,
+            ),
+            (
+                id: "11",
+                x: 1114.362,
+                y: -91.37954,
+            ),
+            (
+                id: "12",
+                x: 1110.4004,
+                y: -21.979246,
+            ),
+            (
+                id: "13",
+                x: 1090.9724,
+                y: -39.140675,
+            ),
+            (
+                id: "14",
+                x: 1056.3257,
+                y: -43.026268,
+            ),
+            (
+                id: "15",
+                x: 1091.9437,
+                y: -6.4368362,
+            ),
+            (
+                id: "16",
+                x: 1056.0022,
+                y: 25.295603,
+            ),
+            (
+                id: "17",
+                x: 1054.3828,
+                y: 61.237427,
+            ),
+            (
+                id: "18",
+                x: 1080.2869,
+                y: 91.99845,
+            ),
+            (
+                id: "19",
+                x: 1133.3901,
+                y: 122.11187,
+            ),
+            (
+                id: "2",
+                x: 905.6984,
+                y: 15.680163,
+            ),
+            (
+                id: "20",
+                x: 1098.0958,
+                y: 171.65332,
+            ),
+            (
+                id: "21",
+                x: 1057.6208,
+                y: 172.62473,
+            ),
+            (
+                id: "23",
+                x: 904.8591,
+                y: 142.22412,
+            ),
+            (
+                id: "24",
+                x: 956.0945,
+                y: 140.7083,
+            ),
+            (
+                id: "25",
+                x: 1027.6427,
+                y: 141.6177,
+            ),
+            (
+                id: "26",
+                x: 1071.2109,
+                y: 142.5892,
+            ),
+            (
+                id: "27",
+                x: 991.9716,
+                y: 156.00648,
+            ),
+            (
+                id: "28",
+                x: 992.5366,
+                y: 189.78604,
+            ),
+            (
+                id: "29",
+                x: 1028.155,
+                y: 204.35715,
+            ),
+            (
+                id: "3",
+                x: 942.975,
+                y: 14.543648,
+            ),
+            (
+                id: "30",
+                x: 1148.9329,
+                y: 204.03333,
+            ),
+            (
+                id: "31",
+                x: 1154.1133,
+                y: 107.54086,
+            ),
+            (
+                id: "32",
+                x: 1132.4192,
+                y: 56.380424,
+            ),
+            (
+                id: "33",
+                x: 918.0628,
+                y: 202.73811,
+            ),
+            (
+                id: "34",
+                x: 864.312,
+                y: 202.41435,
+            ),
+            (
+                id: "35",
+                x: 823.60974,
+                y: 178.30124,
+            ),
+            (
+                id: "36",
+                x: 823.6265,
+                y: 117.01721,
+            ),
+            (
+                id: "37",
+                x: 887.13293,
+                y: 74.24787,
+            ),
+            (
+                id: "39",
+                x: 1220.5172,
+                y: 152.94215,
+            ),
+            (
+                id: "4",
+                x: 996.61896,
+                y: -12.278102,
+            ),
+            (
+                id: "40",
+                x: 1221.051,
+                y: 61.128193,
+            ),
+            (
+                id: "41",
+                x: 1216.7806,
+                y: -37.0914,
+            ),
+            (
+                id: "42",
+                x: 1107.2759,
+                y: -176.12881,
+            ),
+            (
+                id: "43",
+                x: 1000.3815,
+                y: -177.33667,
+            ),
+            (
+                id: "44",
+                x: 878.99286,
+                y: -179.14847,
+            ),
+            (
+                id: "45",
+                x: 720.76483,
+                y: -108.48945,
+            ),
+            (
+                id: "46",
+                x: 723.1806,
+                y: 21.958038,
+            ),
+            (
+                id: "47",
+                x: 720.76495,
+                y: 259.29993,
+            ),
+            (
+                id: "48",
+                x: 879.5968,
+                y: 265.33914,
+            ),
+            (
+                id: "49",
+                x: 1038.4286,
+                y: 264.13132,
+            ),
+            (
+                id: "5",
+                x: 995.7097,
+                y: 44.54766,
+            ),
+            (
+                id: "50",
+                x: 1179.1428,
+                y: 267.75488,
+            ),
+            (
+                id: "52",
+                x: 646.4823,
+                y: 157.84082,
+            ),
+            (
+                id: "53",
+                x: 642.85876,
+                y: -204.51321,
+            ),
+            (
+                id: "54",
+                x: 830.075,
+                y: -222.027,
+            ),
+            (
+                id: "55",
+                x: 1023.33044,
+                y: -231.68976,
+            ),
+            (
+                id: "56",
+                x: 1321.6686,
+                y: -249.80746,
+            ),
+            (
+                id: "57",
+                x: 1320.4608,
+                y: -55.34413,
+            ),
+            (
+                id: "58",
+                x: 1334.3507,
+                y: 325.7315,
+            ),
+            (
+                id: "59",
+                x: 1126.9054,
+                y: 337.73392,
+            ),
+            (
+                id: "6",
+                x: 956.1592,
+                y: -89.56114,
+            ),
+            (
+                id: "60",
+                x: 931.5341,
+                y: 333.58252,
+            ),
+            (
+                id: "61",
+                x: 718.3492,
+                y: 332.37466,
+            ),
+            (
+                id: "63",
+                x: 498.51715,
+                y: 0.8601227,
+            ),
+            (
+                id: "64",
+                x: 495.49152,
+                y: 199.5427,
+            ),
+            (
+                id: "65",
+                x: 569.115,
+                y: 448.6523,
+            ),
+            (
+                id: "66",
+                x: 1013.88153,
+                y: 447.64377,
+            ),
+            (
+                id: "67",
+                x: 1446.5455,
+                y: 454.70352,
+            ),
+            (
+                id: "69",
+                x: 1447.5541,
+                y: -14.267986,
+            ),
+            (
+                id: "7",
+                x: 882.9676,
+                y: -88.6519,
+            ),
+            (
+                id: "70",
+                x: 1457.6395,
+                y: -369.27435,
+            ),
+            (
+                id: "71",
+                x: 1138.9406,
+                y: -381.37677,
+            ),
+            (
+                id: "72",
+                x: 849.4894,
+                y: -384.40247,
+            ),
+            (
+                id: "73",
+                x: 508.60254,
+                y: -386.41956,
+            ),
+            (
+                id: "8",
+                x: 825.68726,
+                y: -90.015724,
+            ),
+            (
+                id: "9",
+                x: 825.2326,
+                y: -33.189972,
+            ),
+            (
+                id: "F1",
+                x: 935.7018,
+                y: -89.10648,
+            ),
+            (
+                id: "F10",
+                x: 1387.0416,
+                y: 454.70352,
+            ),
+            (
+                id: "F11",
+                x: 1186.342,
+                y: -388.43665,
+            ),
+            (
+                id: "F2",
+                x: 959.7961,
+                y: 13.8617525,
+            ),
+            (
+                id: "F3",
+                x: 1073.8109,
+                y: -5.465434,
+            ),
+            (
+                id: "F4",
+                x: 930.04346,
+                y: 203.062,
+            ),
+            (
+                id: "F5",
+                x: 931.04877,
+                y: 142.60814,
+            ),
+            (
+                id: "F6",
+                x: 726.8041,
+                y: -167.06996,
+            ),
+            (
+                id: "F7",
+                x: 1097.0092,
+                y: 338.4139,
+            ),
+            (
+                id: "F8",
+                x: 801.0867,
+                y: -225.65053,
+            ),
+            (
+                id: "F9",
+                x: 501.54272,
+                y: 443.6096,
+            ),
+            (
+                id: "H",
+                x: 1064.1742,
+                y: 204.67308,
+            ),
+            (
+                id: "NA1",
+                x: 1031.1691,
+                y: 12.952535,
+            ),
+            (
+                id: "NA10",
+                x: 1122.0579,
+                y: 238.68002,
+            ),
+            (
+                id: "NA11",
+                x: 1277.582,
+                y: 0.8207378,
+            ),
+            (
+                id: "NA12",
+                x: 972.6009,
+                y: 364.3826,
+            ),
+            (
+                id: "NA13",
+                x: 945.4244,
+                y: -286.6468,
+            ),
+            (
+                id: "NA2",
+                x: 1021.6223,
+                y: -46.82816,
+            ),
+            (
+                id: "NA3",
+                x: 952.9769,
+                y: 71.369385,
+            ),
+            (
+                id: "NA4",
+                x: 996.1644,
+                y: 90.91746,
+            ),
+            (
+                id: "NA5",
+                x: 1021.35516,
+                y: 172.62476,
+            ),
+            (
+                id: "NA6",
+                x: 825.687,
+                y: 26.817987,
+            ),
+            (
+                id: "NA7",
+                x: 1158.5707,
+                y: -9.8098545,
+            ),
+            (
+                id: "NA8",
+                x: 1148.4575,
+                y: -115.92825,
+            ),
+            (
+                id: "NA9",
+                x: 772.7256,
+                y: 73.64242,
+            ),
+            (
+                id: "SD1",
+                x: 883.7551,
+                y: 16.211899,
+            ),
+            (
+                id: "SD2",
+                x: 1131.9327,
+                y: -21.169743,
+            ),
+            (
+                id: "SD3",
+                x: 868.1946,
+                y: 142.74252,
+            ),
+            (
+                id: "SD4",
+                x: 1221.5847,
+                y: 202.58575,
+            ),
+            (
+                id: "SD5",
+                x: 649.50195,
+                y: 206.7586,
+            ),
+            (
+                id: "SD6",
+                x: 501.54276,
+                y: -74.78041,
+            ),
+            (
+                id: "SD7",
+                x: 1450.5797,
+                y: 84.569016,
+            ),
+            (
+                id: "b1",
+                x: 999.9255,
+                y: -79.7442,
+            ),
+            (
+                id: "b2",
+                x: 1097.9347,
+                y: 55.570927,
+            ),
+            (
+                id: "b2_copy",
+                x: 1212.9624,
+                y: -170.69348,
+            ),
+            (
+                id: "b3",
+                x: 1109.7527,
+                y: 142.83504,
+            ),
+            (
+                id: "b4",
+                x: 1130.3143,
+                y: 176.67223,
+            ),
+            (
+                id: "b4_copy",
+                x: 637.4234,
+                y: 326.33545,
+            ),
+            (
+                id: "b4_copy_copy",
+                x: 507.08972,
+                y: -297.66797,
+            ),
+            (
+                id: "b5",
+                x: 1226.2483,
+                y: 265.33908,
+            ),
+            (
+                id: "b5_copy",
+                x: 1450.5797,
+                y: 219.7135,
+            ),
+        ],
+        hidden_bus_labels: [
+            "b1",
+            "b2",
+            "b2_copy",
+            "b3",
+            "b4",
+            "b4_copy",
+            "b4_copy_copy",
+            "b5",
+            "b5_copy",
+        ],
+    ),
+)

@@ -1,0 +1,292 @@
+(
+    events: [
+        // F1: falta em F1, isolada pela chave 6. Duração: 160 min.
+        (
+            at_min: 0.0,
+            bus: "F1",
+            action: Fault,
+        ),
+        (
+            at_min: 0.0,
+            bus: "6",
+            action: Open,
+        ),
+        (
+            at_min: 160.0,
+            bus: "F1",
+            action: Repair,
+        ),
+        (
+            at_min: 160.0,
+            bus: "6",
+            action: Close,
+        ),
+
+        // F2: falta em F2, isolada pela chave 3. Duração: 288 min.
+        (
+            at_min: 200.0,
+            bus: "F2",
+            action: Fault,
+        ),
+        (
+            at_min: 200.0,
+            bus: "3",
+            action: Open,
+        ),
+        (
+            at_min: 488.0,
+            bus: "F2",
+            action: Repair,
+        ),
+        (
+            at_min: 488.0,
+            bus: "3",
+            action: Close,
+        ),
+
+        // F3: falta em F3, isolada pela chave 15. Duração: 162 min.
+        (
+            at_min: 500.0,
+            bus: "F3",
+            action: Fault,
+        ),
+        (
+            at_min: 500.0,
+            bus: "15",
+            action: Open,
+        ),
+        (
+            at_min: 662.0,
+            bus: "F3",
+            action: Repair,
+        ),
+        (
+            at_min: 662.0,
+            bus: "15",
+            action: Close,
+        ),
+
+        // F4: falta em F4, isolada pela chave 28. Duração: 180 min.
+        (
+            at_min: 700.0,
+            bus: "F4",
+            action: Fault,
+        ),
+        (
+            at_min: 700.0,
+            bus: "28",
+            action: Open,
+        ),
+        (
+            at_min: 880.0,
+            bus: "F4",
+            action: Repair,
+        ),
+        (
+            at_min: 880.0,
+            bus: "28",
+            action: Close,
+        ),
+
+        // F5: falta em F5, isolada pela chave 23. Duração: 60 min.
+        (
+            at_min: 900.0,
+            bus: "F5",
+            action: Fault,
+        ),
+        (
+            at_min: 900.0,
+            bus: "23",
+            action: Open,
+        ),
+        (
+            at_min: 960.0,
+            bus: "F5",
+            action: Repair,
+        ),
+        (
+            at_min: 960.0,
+            bus: "23",
+            action: Close,
+        ),
+
+        // F6: falta logo após a chave 44. Duração: 80 min.
+        (
+            at_min: 1000.0,
+            bus: "F6",
+            action: Fault,
+        ),
+        (
+            at_min: 1000.0,
+            bus: "44",
+            action: Open,
+        ),
+        (
+            at_min: 1080.0,
+            bus: "F6",
+            action: Repair,
+        ),
+        (
+            at_min: 1080.0,
+            bus: "44",
+            action: Close,
+        ),
+
+        // F7: falta em F7, isolada pela chave 59. Duração: 240 min.
+        (
+            at_min: 1100.0,
+            bus: "F7",
+            action: Fault,
+        ),
+        (
+            at_min: 1100.0,
+            bus: "59",
+            action: Open,
+        ),
+        (
+            at_min: 1340.0,
+            bus: "F7",
+            action: Repair,
+        ),
+        (
+            at_min: 1340.0,
+            bus: "59",
+            action: Close,
+        ),
+
+        // F8: falta em F8, isolada pela chave 53. Duração: 150 min.
+        (
+            at_min: 1400.0,
+            bus: "F8",
+            action: Fault,
+        ),
+        (
+            at_min: 1400.0,
+            bus: "53",
+            action: Open,
+        ),
+        (
+            at_min: 1550.0,
+            bus: "F8",
+            action: Repair,
+        ),
+        (
+            at_min: 1550.0,
+            bus: "53",
+            action: Close,
+        ),
+
+        // F9: falta em F9, isolada pela chave 64. Duração: 180 min.
+        (
+            at_min: 1600.0,
+            bus: "F9",
+            action: Fault,
+        ),
+        (
+            at_min: 1600.0,
+            bus: "64",
+            action: Open,
+        ),
+        (
+            at_min: 1780.0,
+            bus: "F9",
+            action: Repair,
+        ),
+        (
+            at_min: 1780.0,
+            bus: "64",
+            action: Close,
+        ),
+
+        // F10: falta em F10, isolada pela chave 66. Duração: 60 min.
+        (
+            at_min: 1800.0,
+            bus: "F10",
+            action: Fault,
+        ),
+        (
+            at_min: 1800.0,
+            bus: "66",
+            action: Open,
+        ),
+        (
+            at_min: 1860.0,
+            bus: "F10",
+            action: Repair,
+        ),
+        (
+            at_min: 1860.0,
+            bus: "66",
+            action: Close,
+        ),
+
+        // F11: falta em F11, isolada pela chave 70. Duração: 100 min.
+        (
+            at_min: 1900.0,
+            bus: "F11",
+            action: Fault,
+        ),
+        (
+            at_min: 1900.0,
+            bus: "70",
+            action: Open,
+        ),
+        (
+            at_min: 2000.0,
+            bus: "F11",
+            action: Repair,
+        ),
+        (
+            at_min: 2000.0,
+            bus: "70",
+            action: Close,
+        ),
+
+        // Manobras associadas à F6.
+        // Aos 30 min após a F6: abre 45 e 49 para separar o trecho entre elas.
+        (
+            at_min: 1030.0,
+            bus: "45",
+            action: Open,
+        ),
+        (
+            at_min: 1080.0,
+            bus: "45",
+            action: Close,
+        ),
+        (
+            at_min: 1030.0,
+            bus: "49",
+            action: Open,
+        ),
+        (
+            at_min: 1080.0,
+            bus: "49",
+            action: Close,
+        ),
+
+        // Aos 50 min após a F6: fecha NA10 para transferir o jusante de 49 para SD2.
+        (
+            at_min: 1050.0,
+            bus: "NA10",
+            action: Close,
+        ),
+        (
+            at_min: 1080.0,
+            bus: "NA10",
+            action: Open,
+        ),
+
+        // Aos 30 min após a F6: fecha NA9 para transferir o trecho 45..49 para SD3.
+        (
+            at_min: 1030.0,
+            bus: "NA9",
+            action: Close,
+        ),
+        (
+            at_min: 1080.0,
+            bus: "NA9",
+            action: Open,
+        ),
+    ],
+)
