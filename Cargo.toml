@@ -5,6 +5,9 @@ members = ["gui"]
 name = "decfec"
 version = "0.1.0"
 edition = "2024"
+authors = ["gbPagano <guilhermebpagano@gmail.com>"]
+description = "Calculadora de indicadores DEC/FEC para redes de distribuicao."
+license = "GPL-3.0-or-later"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

@@ -2,6 +2,9 @@
 name = "decfec-gui"
 version = "0.1.0"
 edition = "2024"
+authors = ["gbPagano <guilhermebpagano@gmail.com>"]
+description = "Interface grafica para a calculadora DEC/FEC."
+license = "GPL-3.0-or-later"
 
 [dependencies]
 decfec = { path = ".." }
